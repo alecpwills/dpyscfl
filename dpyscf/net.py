@@ -8,7 +8,7 @@ import numpy as np
 import scipy
 from ase import Atoms
 from ase.io import read
-from .torch_routines import *
+from .scf import *
 from opt_einsum import contract
 
 class XC(torch.nn.Module):

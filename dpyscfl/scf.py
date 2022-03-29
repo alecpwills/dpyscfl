@@ -78,7 +78,9 @@ class eig(torch.nn.Module):
             (Inverse) Cholesky decomp. of overlap matrix S
             s_chol = np.linalg.inv(np.linalg.cholesky(S))
         '''
-        e, c = torch.symeig(contract('ij,...jk,kl->...il',s_chol, h, s_chol.T), eigenvectors=True,upper=False)
+        #e, c = torch.symeig(contract('ij,...jk,kl->...il',s_chol, h, s_chol.T), eigenvectors=True,upper=False)
+        #symeig deprecated for below, uses lower automatically
+        e, c = torch.linalg.eigh(A=contract('ij,...jk,kl->...il',s_chol, h, s_chol.T))
         c = contract('ij,...jk ->...ik',s_chol.T, c)
         return e, c
 

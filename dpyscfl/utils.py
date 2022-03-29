@@ -2,8 +2,16 @@ import numpy as np
 from pyscf import gto, dft, scf , df
 
 def get_datapoint(mol, mf, dfit = False):
-    """ Builds all matrices needed for SCF calculations (the ones considered
+    """Builds all matrices needed for SCF calculations (the ones considered
         constant)
+
+    Args:
+        mol (gto.Mol): pyscf molecule object
+        mf (scf.X): kernel for scf calculation, e.g. scf.RKS(mol)
+        dfit (bool, optional): Whether or not to use density fitting. Defaults to False.
+
+    Returns:
+        matrices (dict): dictionary with key/value pairs of input data relating to given molecule
     """
     s = mol.intor('int1e_ovlp')
     t = mol.intor('int1e_kin')

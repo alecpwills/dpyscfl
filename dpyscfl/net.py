@@ -14,24 +14,17 @@ from opt_einsum import contract
 class XC(torch.nn.Module):
 
     def __init__(self, grid_models=None, heg_mult=True, pw_mult=True,
-                    level = 1, exx_a=None):
-        """ Defines the XC functional on a grid
+                    level = 1, exx_a=None, epsilon=1e-8):
+        """Defines the XC functional on a grid
 
-        Parameters
-        ----------
-        grid_models, list of X_L (local exchange) or C_L (local correlation)
-            Defines the xc-models/enhancement factors
-        heg_mult, bool
-            Use homoegeneous electron gas exchange (multiplicative if grid_models is not empty)
-        pw_mult, bool
-            Use homoegeneous electron gas correlation (Perdew & Wang)
-        level, int
-            Controls the number of density "descriptors" generated
-            1: LDA, 2: GGA, 3:meta-GGA, 4: meta-GGA + electrostatic (nonlocal)
-        exx_a, float
-            Exact exchange mixing parameter
+        Args:
+            grid_models (list, optional): list of X_L (local exchange) or C_L (local correlation). Defines the xc-models/enhancement factors. Defaults to None.
+            heg_mult (bool, optional): Use homoegeneous electron gas exchange (multiplicative if grid_models is not empty). Defaults to True.
+            pw_mult (bool, optional): Use homoegeneous electron gas correlation (Perdew & Wang). Defaults to True.
+            level (int, optional): Controls the number of density "descriptors" generated. 1: LDA, 2: GGA, 3:meta-GGA, 4: meta-GGA + electrostatic (nonlocal). Defaults to 1.
+            exx_a (_type_, optional): Exact exchange mixing parameter. Defaults to None.
+            epsilon (float, optional): Offset to avoid div/0 in calculations. Defaults to 1e-8.
         """
-
 
         super().__init__()
         self.heg_mult = heg_mult
@@ -39,6 +32,7 @@ class XC(torch.nn.Module):
         self.grid_coords = None
         self.training = True
         self.level = level
+        self.epsilon = epsilon
         if level > 3:
             print('WARNING: Non-local models highly experimental and likely will not work ')
         self.loge = 1e-5
@@ -60,94 +54,167 @@ class XC(torch.nn.Module):
             self.exx_a = 0
 
     def evaluate(self):
+        """Switches self.training flag to False
+        """
         self.training=False
     def train(self):
+        """Switches self.training flag to True
+        """
         self.training=True
 
     def add_model_mult(self, model_mult):
+        """_summary_
+
+        .. todo:: 
+            Unclear what the purpose of this is
+
+        Args:
+            model_mult (_type_): _description_
+        """
         del(self.model_mult)
         self.register_buffer('model_mult',torch.Tensor(model_mult))
 
     def add_exx_a(self, exx_a):
+        """Adds exact-exchange mixing parameter after initialization
+
+        Args:
+            exx_a (float): Exchange mixing parameter
+        """
         self.exx_a = torch.nn.Parameter(torch.Tensor([exx_a]))
         self.exx_a.requires_grad = True
 
+    # Density (rho)
+    def l_1(self, rho):
+        """Level 1 Descriptor -- Creates dimensionless quantity from rho.
+        Eq. 3 in `base paper <https://link.aps.org/doi/10.1103/PhysRevB.104.L161109>`_
+
+        .. math:: x_0 = \\rho^{1/3}
+
+        Args:
+            rho (torch.Tensor): density
+
+        Returns:
+            torch.Tensor: dimensionless density
+        """
+        return rho**(1/3)
+
+    # Reduced density gradient s
+    def l_2(self, rho, gamma):
+        """Level 2 Descriptor -- Reduced gradient density
+        Eq. 5 in `base paper <https://link.aps.org/doi/10.1103/PhysRevB.104.L161109>`_
+
+        .. math:: x_2=s=\\frac{1}{2(3\\pi^2)^{1/3}} \\frac{|\\nabla \\rho|}{\\rho^{4/3}}
+
+        Args:
+            rho (torch.Tensor): density
+            gamma (torch.Tensor): squared density gradient
+
+        Returns:
+            torch.Tensor: reduced density gradient s
+        """
+        return torch.sqrt(gamma)/(2*(3*np.pi**2)**(1/3)*rho**(4/3)+self.epsilon)
+
+    # Reduced kinetic energy density alpha
+    def l_3(self, rho, gamma, tau):
+        """Level 3 Descriptor -- Reduced kinetic energy density
+        Eq. 6 in `base paper <https://link.aps.org/doi/10.1103/PhysRevB.104.L161109>`_
+
+        .. math:: x_3 = \\alpha = \\frac{\\tau-\\tau^W}{\\tau^{unif}},
+
+        where
+
+        .. math:: \\tau^W = \\frac{|\\nabla \\rho|^2}{8\\rho}, \\tau^{unif} = \\frac{3}{10} (3\\pi^2)^{2/3}\\rho^{5/3}.
+
+        Args:
+            rho (torch.Tensor): density
+            gamma (torch.Tensor): squared density gradient
+            tau (torch.Tensor): kinetic energy density
+
+        Returns:
+            torch.Tensor: reduced kinetic energy density
+        """
+        uniform_factor = (3/10)*(3*np.pi**2)**(2/3)
+        tw = gamma/(8*rho+self.epsilon)
+        return torch.nn.functional.relu((tau - tw)/(uniform_factor*rho**(5/3)+tw*1e-3 + 1e-12))
+
+    # Unit-less electrostatic potential
+    def l_4(self, rho, nl):
+        """Level 4 Descriptor -- Unitless electrostatic potential
+
+        .. todo:: Figure out what exactly this part is
+
+        Args:
+            rho (torch.Tensor): density
+            nl (torch.Tensor): some non-local descriptor
+
+        Returns:
+            torch.nn.functional.relu: _description_
+        """
+        u = nl[:,:1]/((rho.unsqueeze(-1)**(1/3))*self.nl_ueg[:,:1] + self.epsilon)
+        wu = nl[:,1:]/((rho.unsqueeze(-1))*self.nl_ueg[:,1:] + self.epsilon)
+        return torch.nn.functional.relu(torch.cat([u,wu],dim=-1))
 
     def get_descriptors(self, rho0_a, rho0_b, gamma_a, gamma_b, gamma_ab,nl_a,nl_b, tau_a, tau_b, spin_scaling = False):
+        """Creates 'ML-compatible' descriptors from the electron density and its gradients, a & b correspond to spin channels
+
+        Args:
+            rho0_a (torch.Tensor): :math:`\\rho` in spin-channel a
+            rho0_b (torch.Tensor): :math:`\\rho` in spin-channel b
+            gamma_a (torch.Tensor): :math:`|\\nabla \\rho|^2` in spin-channel a 
+            gamma_b (torch.Tensor): :math:`|\\nabla \\rho|^2` in spin-channel b
+            gamma_ab (torch.Tensor): _description_
+            nl_a (torch.Tensor): _description_
+            nl_b (torch.Tensor): _description_
+            tau_a (torch.Tensor): KE density in spin-channel a
+            tau_b (torch.Tensor): KE density in spin-channel b
+            spin_scaling (bool, optional): Flag for spin-scaling. Defaults to False.
+
+        Returns:
+            _type_: _description_
         """
-        Creates "ML-compatible" descriptors from the electron density and its gradients, a & b correspond to spin channels
-
-        Parameters
-        ----------
-        spin_scaling, bool
-            Only create descriptors compatible with spin_scaling (i.e. ommit spin information), usually used
-            for exchange functionals
-        """
-
-
-        uniform_factor = (3/10)*(3*np.pi**2)**(2/3)
-
-        # Density (rho)
-        def l_1(rho):
-            return rho**(1/3)
-
-        # Reduced density gradient s
-        def l_2(rho, gamma):
-            return torch.sqrt(gamma)/(2*(3*np.pi**2)**(1/3)*rho**(4/3)+self.epsilon)
-
-        # Reduced kinetic energy density alpha
-        def l_3(rho, gamma, tau):
-            tw = gamma/(8*rho+self.epsilon)
-            return torch.nn.functional.relu((tau - tw)/(uniform_factor*rho**(5/3)+tw*1e-3 + 1e-12))
-
-        # Unit-less electrostatic potential
-        def l_4(rho, nl):
-            u = nl[:,:1]/((rho.unsqueeze(-1)**(1/3))*self.nl_ueg[:,:1] + self.epsilon)
-            wu = nl[:,1:]/((rho.unsqueeze(-1))*self.nl_ueg[:,1:] + self.epsilon)
-            return torch.nn.functional.relu(torch.cat([u,wu],dim=-1))
-
 
         if not spin_scaling:
+            #If no spin-scaling, calculate polarization and use for X1
             zeta = (rho0_a - rho0_b)/(rho0_a + rho0_b + self.epsilon)
             spinscale = 0.5*((1+zeta)**(4/3) + (1-zeta)**(4/3)) # zeta
 
         if self.level > 0:  #  LDA
             if spin_scaling:
-                descr1 = torch.log(l_1(2*rho0_a) + self.loge)
-                descr2 = torch.log(l_1(2*rho0_b) + self.loge)
+                descr1 = torch.log(self.l_1(2*rho0_a) + self.loge)
+                descr2 = torch.log(self.l_1(2*rho0_b) + self.loge)
             else:
-                descr1 = torch.log(l_1(rho0_a + rho0_b) + self.loge)# rho
+                descr1 = torch.log(self.l_1(rho0_a + rho0_b) + self.loge)# rho
                 descr2 = torch.log(spinscale) # zeta
             descr = torch.cat([descr1.unsqueeze(-1), descr2.unsqueeze(-1)],dim=-1)
         if self.level > 1: # GGA
             if spin_scaling:
-                descr3a = l_2(2*rho0_a, 4*gamma_a) # s
-                descr3b = l_2(2*rho0_b, 4*gamma_b) # s
+                descr3a = self.l_2(2*rho0_a, 4*gamma_a) # s
+                descr3b = self.l_2(2*rho0_b, 4*gamma_b) # s
                 descr3 = torch.cat([descr3a.unsqueeze(-1), descr3b.unsqueeze(-1)],dim=-1)
                 descr3 = (1-torch.exp(-descr3**2/self.s_gam))*torch.log(descr3 + 1)
             else:
-                descr3 = l_2(rho0_a + rho0_b, gamma_a + gamma_b + 2*gamma_ab) # s
+                descr3 = self.l_2(rho0_a + rho0_b, gamma_a + gamma_b + 2*gamma_ab) # s
                 descr3 = descr3.unsqueeze(-1)
                 descr3 = (1-torch.exp(-descr3**2/self.s_gam))*torch.log(descr3 + 1)
             descr = torch.cat([descr, descr3],dim=-1)
         if self.level > 2: # meta-GGA
             if spin_scaling:
-                descr4a = l_3(2*rho0_a, 4*gamma_a, 2*tau_a)
-                descr4b = l_3(2*rho0_b, 4*gamma_b, 2*tau_b)
+                descr4a = self.l_3(2*rho0_a, 4*gamma_a, 2*tau_a)
+                descr4b = self.l_3(2*rho0_b, 4*gamma_b, 2*tau_b)
                 descr4 = torch.cat([descr4a.unsqueeze(-1), descr4b.unsqueeze(-1)],dim=-1)
             else:
-                descr4 = l_3(rho0_a + rho0_b, gamma_a + gamma_b + 2*gamma_ab, tau_a + tau_b)
+                descr4 = self.l_3(rho0_a + rho0_b, gamma_a + gamma_b + 2*gamma_ab, tau_a + tau_b)
                 descr4 = descr4.unsqueeze(-1)
             descr4 = torch.log((descr4 + 1)/2)
             descr = torch.cat([descr, descr4],dim=-1)
         if self.level > 3: # meta-GGA + V_estat
             if spin_scaling:
-                descr5a = l_4(2*rho0_a, 2*nl_a)
-                descr5b = l_4(2*rho0_b, 2*nl_b)
+                descr5a = self.l_4(2*rho0_a, 2*nl_a)
+                descr5b = self.l_4(2*rho0_b, 2*nl_b)
                 descr5 = torch.log(torch.stack([descr5a, descr5b],dim=-1) + self.loge)
                 descr5 = descr5.view(descr5.size()[0],-1)
             else:
-                descr5= torch.log(l_4(rho0_a + rho0_b, nl_a + nl_b) + self.loge)
+                descr5= torch.log(self.l_4(rho0_a + rho0_b, nl_a + nl_b) + self.loge)
 
             descr = torch.cat([descr, descr5],dim=-1)
         if spin_scaling:
@@ -157,7 +224,13 @@ class XC(torch.nn.Module):
 
 
     def forward(self, dm):
-        """ Main method, calculates Exc from density matrix dm
+        """_summary_
+
+        Args:
+            dm (torch.Tensor): density matrix
+
+        Returns:
+            _type_: _description_
         """
         Exc = 0
         if self.grid_models or self.heg_mult:
@@ -220,7 +293,14 @@ class XC(torch.nn.Module):
         return Exc
 
     def eval_grid_models(self, rho):
-        """ Evaluates all models stored in self.grid_models along with HEG exchange and correlation
+        """Evaluates all models stored in self.grid_models along with HEG exchange and correlation
+
+
+        Args:
+            rho ([list of torch.Tensors]): List with [rho0_a,rho0_b,gamma_a,gamma_ab,gamma_b, dummy for laplacian, dummy for laplacian, tau_a, tau_b, non_loc_a, non_loc_b]
+
+        Returns:
+            _type_: _description_
         """
         Exc = 0
         rho0_a = rho[:, 0]
@@ -309,27 +389,18 @@ class XC(torch.nn.Module):
 
 class C_L(torch.nn.Module):
     def __init__(self, n_input=2,n_hidden=16, device='cpu', ueg_limit=False, lob=2.0, use = []):
-        """ Local correlation model based on MLP
-            Receives density descriptors in this order : [rho, spinscale, s, alpha, nl]
-            input may be truncated depending on level of approximation
-            
-        Parameters
-        ----------
+        """Local correlation model based on MLP
+        Receives density descriptors in this order : [rho, spinscale, s, alpha, nl]
+        input may be truncated depending on level of approximation
 
-        n_input, int
-            Input dimensions (LDA: 2, GGA: 3 , meta-GGA: 4)
-        n_hidden, int
-            Number of hidden nodes (three hidden layers used by default)
-        device, str {'cpu','cuda'}
-        ueg_limit, bool
-            Enforce uniform homoegeneous electron gas limit
-        lob, float
-            Technically Lieb-Oxford bound but used here to enforce non-negativity.
-            Should be kept at 2.0 in most instances.
-        use, list of ints
-            Indices for [s, alpha] (in that order) in input, to determine UEG limit
+        Args:
+            n_input (int, optional): Input dimensions (LDA: 2, GGA: 3 , meta-GGA: 4). Defaults to 2.
+            n_hidden (int, optional): Number of hidden nodes (three hidden layers used by default). Defaults to 16.
+            device (str, optional): {'cpu','cuda'}. Defaults to 'cpu'.
+            ueg_limit (bool, optional): Enforce uniform homoegeneous electron gas limit. Defaults to False.
+            lob (float, optional): Technically Lieb-Oxford bound but used here to enforce non-negativity. Should be kept at 2.0 in most instances. Defaults to 2.0.
+            use (list of ints, optional): Indices for [s, alpha] (in that order) in input, to determine UEG limit. Defaults to [].
         """
-
         super().__init__()
         self.spin_scaling = False
         self.lob = False
@@ -361,6 +432,14 @@ class C_L(torch.nn.Module):
 
 
     def forward(self, rho, **kwargs):
+        """Forward pass in network
+
+        Args:
+            rho (torch.Tensor): density
+
+        Returns:
+            _type_: _description_
+        """
         inp = rho
         squeezed = -self.net(inp).squeeze()
         if self.ueg_limit:
@@ -385,25 +464,18 @@ class C_L(torch.nn.Module):
 
 class X_L(torch.nn.Module):
     def __init__(self, n_input, n_hidden=16, use=[], device='cpu', ueg_limit=False, lob=1.804, one_e=False):
-        """ Local exchange model based on MLP
-            Receives density descriptors in this order : [rho, s, alpha, nl],
-            input may be truncated depending on level of approximation
+        """Local exchange model based on MLP
+        Receives density descriptors in this order : [rho, s, alpha, nl],
+        input may be truncated depending on level of approximation
 
-        Parameters
-        ----------
-        n_input, int
-            Input dimensions (LDA: 1, GGA: 2, meta-GGA: 3, ...)
-        n_hidden, int
-            Number of hidden nodes (three hidden layers used by default)
-        use, list of ints
-            Only these indices are used as input to the model (can be used to omit density as input
-            to enforce uniform density scaling). These indices are also used to enforce UEG where
-            the assumed order is [s, alpha, ...].
-        device, str {'cpu','cuda'}
-        ueg_limit, bool
-            Enforce uniform homoegeneous electron gas limit
-        lob, float
-            Enforce this value as local Lieb-Oxford bound (don't enforce if set to 0)
+        Args:
+            n_input (int): Input dimensions (LDA: 1, GGA: 2, meta-GGA: 3, ...)
+            n_hidden (int, optional): Number of hidden nodes (three hidden layers used by default). Defaults to 16.
+            use (list of ints, optional): Only these indices are used as input to the model (can be used to omit density as input to enforce uniform density scaling). These indices are also used to enforce UEG where the assumed order is [s, alpha, ...].. Defaults to [].
+            device (str, optional): {'cpu','cuda'}. Defaults to 'cpu'.
+            ueg_limit (bool, optional): Enforce uniform homoegeneous electron gas limit. Defaults to False.
+            lob (float, optional): Enforce this value as local Lieb-Oxford bound (don't enforce if set to 0). Defaults to 1.804.
+            one_e (bool, optional): _description_. Defaults to False.
         """
         super().__init__()
         self.ueg_limit = ueg_limit
@@ -428,6 +500,14 @@ class X_L(torch.nn.Module):
         self.lobf = LOB(lob).to(device)
 
     def forward(self, rho, **kwargs):
+        """Forward pass
+
+        Args:
+            rho (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
         squeezed = self.net(rho[...,self.use]).squeeze()
         if self.ueg_limit:
             ueg_lim = rho[...,self.use[0]]

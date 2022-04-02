@@ -5,6 +5,7 @@ dpyscfl package
    :members:
    :undoc-members:
    :show-inheritance:
+   :special-members:
 
 Submodules
 ----------

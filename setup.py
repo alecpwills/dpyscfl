@@ -13,7 +13,7 @@ setup(
     # Comment out this line to prevent the files from being packaged with your software
     # Extend/modify the list to include/exclude other items as need be
     # Additional entries you may want simply uncomment the lines you want and fill in the data
-    author_email='alec.wills@stonybrook.edu',      # Author email
+    #author_email='alec.wills@stonybrook.edu',      # Author email
     # url='http://www.my_package.com',  # Website
     use_incremental=True,
     setup_requires=['incremental'],

@@ -6,21 +6,26 @@ from opt_einsum import contract
 
 def get_hcore(v, t):
     """ "Core" Hamiltionian, includes ion-electron and kinetic contributions
+
+    .. math:: H_{core} = T + V_{nuc-elec}
+
+    Args:
+        v (torch.Tensor, np.array): Electron-ion interaction energy
+        t (torch.Tensor, np.array): Kinetic energy
+
+    Returns:
+        torch.Tensor: v + t
     """
     return v + t
 
 class get_veff(torch.nn.Module):
     def __init__(self, exx=False, model=None, df= False):
-        """ Builds the one-electron effective potential (not including local xc-potential)
+        """Builds the one-electron effective potential (not including local xc-potential)
 
-        Parameters
-        ----------
-        exx, bool
-            Exact exchange
-        model, xc-model
-            Only used for exact exchange mixing parameter
-        df, bool
-            Use density fitting
+        Args:
+            exx (bool, optional): Exact exchange flag. Defaults to False.
+            model (xc-model): Only used for exact exchange mixing parameter. Defaults to None.
+            df (bool, optional): Use density fitting flag. Defaults to False.
         """
         super().__init__()
         self.exx = exx
@@ -29,6 +34,15 @@ class get_veff(torch.nn.Module):
             self.forward = self.forward_df
 
     def forward(self, dm, eri):
+        """Forward pass if no density fitting
+
+        Args:
+            dm (torch.Tensor): Density matrix
+            eri (torch.Tensor(?)): Electron repulsion integral tensor
+
+        Returns:
+            torch.Tensor: The "effective" potential
+        """
         J = contract('...ij,ijkl->...kl',dm, eri)
         if self.exx:
             K = self.model.exx_a * contract('...ij,ikjl->...kl',dm, eri)
@@ -41,7 +55,17 @@ class get_veff(torch.nn.Module):
             return J-0.5*K
 
     def forward_df(self, dm, df_3c, df_2c_inv, eri):
+        """Forward pass if density fitting
 
+        Args:
+            dm (torch.Tensor): Density matrix
+            df_3c (torch.Tensor): 3-center density fit integrals(?)
+            df_2c_inv (torch.Tensor): 2-center density fit integrals(?)
+            eri (torch.Tensor(?)): Electron repulsion integral tensor
+
+        Returns:
+            torch.Tensor: The "effective" potential
+        """
         J = contract('mnQ, QP, ...ij, ijP->...mn', df_3c, df_2c_inv, dm, df_3c)
         if not self.exx:
             K = self.model.exx_a * contract('miQ, QP, ...ij, njP->...mn', df_3c, df_2c_inv, dm, df_3c)
@@ -55,32 +79,39 @@ class get_veff(torch.nn.Module):
 
 
 def get_fock(hc, veff):
-    """Fock matrix"""
+    """Get the Fock matrix
+
+    Args:
+        hc (torch.Tensor): Core Hamiltonian
+        veff (torch.Tensor): Effective Potential
+
+    Returns:
+        torch.Tensor: hc+veff
+    """
     return hc + veff
 
 
 class eig(torch.nn.Module):
 
     def __init__(self):
-        """ Solves generalized eigenvalue problem using Cholesky decomposition"""
+        """Solves generalized eigenvalue problem using Cholesky decomposition
+        """
         super().__init__()
 
     def forward(self, h, s_chol):
-        '''Solver for generalized eigenvalue problem
+        """Solver for generalized eigenvalue problem
 
-        .. math:: HC = SCE
+        .. todo:: torch.symeig is deprecated for torch.linalg.eigh, replace
 
-        Parameters
-        ----------
-        h, torch.Tensor
-            Hamiltionian
-        s_chol, torch.Tensor
-            (Inverse) Cholesky decomp. of overlap matrix S
-            s_chol = np.linalg.inv(np.linalg.cholesky(S))
-        '''
-        #e, c = torch.symeig(contract('ij,...jk,kl->...il',s_chol, h, s_chol.T), eigenvectors=True,upper=False)
-        #symeig deprecated for below, uses lower automatically
-        e, c = torch.linalg.eigh(A=contract('ij,...jk,kl->...il',s_chol, h, s_chol.T))
+        Args:
+            h (torch.Tensor): Hamiltionian
+            s_chol (torch.Tensor): (Inverse) Cholesky decomp. of overlap matrix S
+                                    s_chol = np.linalg.inv(np.linalg.cholesky(S))
+
+        Returns:
+            (torch.Tensor, torch.Tensor): Eigenvalues (MO energies), eigenvectors (MO coeffs)
+        """
+        e, c = torch.symeig(contract('ij,...jk,kl->...il',s_chol, h, s_chol.T), eigenvectors=True,upper=False)
         c = contract('ij,...jk ->...ik',s_chol.T, c)
         return e, c
 
@@ -93,6 +124,16 @@ class energy_tot(torch.nn.Module):
         super().__init__()
 
     def forward(self, dm, hcore, veff):
+        """Tensor contraction to find total electron energy (e-e + e-ion)
+
+        Args:
+            dm (torch.Tensor): Density matrix
+            hcore (torch.Tensor): Core Hamiltonian
+            veff (torch.Tensor): Effective Potential
+
+        Returns:
+            torch.Tensor: The electronic energy
+        """
         return torch.sum((contract('...ij,ij', dm, hcore) + .5*contract('...ij,...ij', dm, veff))).unsqueeze(0)
 
 class make_rdm1(torch.nn.Module):
@@ -102,6 +143,15 @@ class make_rdm1(torch.nn.Module):
         super().__init__()
 
     def forward(self, mo_coeff, mo_occ):
+        """Forward pass calculating one-particle reduced density matrix.
+
+        Args:
+            mo_coeff (torch.Tensor/np.array(?)): Molecular orbital coefficients
+            mo_occ (torch.Tensor/np.array(?)): Molecular orbital occupation numbers
+
+        Returns:
+            torch.Tensor/np.array(?): The RDM1
+        """
         if mo_coeff.ndim == 3:
             mocc_a = mo_coeff[0, :, mo_occ[0]>0]
             mocc_b = mo_coeff[1, :, mo_occ[1]>0]
@@ -118,22 +168,16 @@ class make_rdm1(torch.nn.Module):
 class SCF(torch.nn.Module):
 
     def __init__(self, alpha=0.8, nsteps=10, xc=None, device='cpu', exx=False):
-        super().__init__()
-        """ This class implements the self-consistent field (SCF) equations
+        """This class implements the self-consistent field (SCF) equations
 
-        Parameters
-        ---------
-        alpha, float
-            Linear mixing parameter
-        nsteps, int
-            Number of scf steps
-        xc, XC
-            Class containing the exchange-correlation models
-        device, {'cpu','cuda'}
-            Which device to use
-        exx, bool
-            Use exact exchange?
+        Args:
+            alpha (float, optional): Linear mixing parameter. Defaults to 0.8.
+            nsteps (int, optional): Number of scf steps. Defaults to 10.
+            xc (dpyscfl.net.XC, optional): Class containing the exchange-correlation models. Defaults to None.
+            device (str, optional): {'cpu','cuda'}, which device to use. Defaults to 'cpu'.
+            exx (bool, optional): Use exact exchange flag. Defaults to False.
         """
+        super().__init__()
         self.nsteps = nsteps
         self.alpha = alpha
         self.get_veff = get_veff(exx, xc).to(device) # Include Fock (exact) exchange?
@@ -144,18 +188,16 @@ class SCF(torch.nn.Module):
         self.xc = xc
 
     def forward(self, dm, matrices, sc=True):
-        """
-        Parameters
-        ------------
-        dm, torch.Tensor
-            Initial density matrix
-        matrices, dict of torch.Tensors
-            Contains all other matrices that are considered fixed during
-            SCF calculations (e-integrals etc.)
-        sc, bool
-            If True does self-consistent calculations, else single-pass
-        """
+        """Forward pass SCF cycle
 
+        Args:
+            dm (torch.Tensor): Initial density matrix
+            matrices (dict of torch.Tensors): Contains all other matrices that are considered fixed during SCF calculations (e-integrals etc.)
+            sc (bool, optional): If True does self-consistent calculations, else single-pass. Defaults to True.
+
+        Returns:
+            dict of torch.Tensors: results: E, dm, and mo_energies
+        """
         dm = dm[0]
 
         # Required matrices

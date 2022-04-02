@@ -1,17 +1,24 @@
 import numpy as np
+import scipy
 from pyscf import gto, dft, scf , df
 
 def get_datapoint(mol, mf, dfit = False):
-    """Builds all matrices needed for SCF calculations (the ones considered
-        constant)
+    """
+    Builds all matrices needed for SCF calculations (the ones considered constant)
 
     Args:
-        mol (gto.Mol): pyscf molecule object
-        mf (scf.X): kernel for scf calculation, e.g. scf.RKS(mol)
+        mol (pyscf.gto.Mol): pyscf molecule object
+        mf (pyscf.scf.X): kernel for scf calculation, e.g. scf.RKS(mol)
         dfit (bool, optional): Whether or not to use density fitting. Defaults to False.
 
     Returns:
-        matrices (dict): dictionary with key/value pairs of input data relating to given molecule
+        dict: dictionary with key/value pairs of input data matrices relating to given molecule
+
+        keys: dm_init, v, t, s, n_elec, n_atoms, e_nuc, mo_energy, mo_occ
+        
+        if dfit: keys include df_2c_inv, df_3c
+
+        else: keys include eri
     """
     s = mol.intor('int1e_ovlp')
     t = mol.intor('int1e_kin')
@@ -60,8 +67,11 @@ def get_datapoint(mol, mf, dfit = False):
 
 class Dataset(object):
     def __init__(self, **kwargs):
-        """ Dataset class that serves as input to pytorch DataLoader and stores
+        """Dataset class that serves as input to pytorch DataLoader and stores
         all the matrices defining a given system (molecule)
+
+        Required arguments of kwargs:
+            dm_init, v, t, s, n_elec, e_nuc
         """
         needed = ['dm_init','v','t','s','n_elec','e_nuc']
         for n in needed:
@@ -74,6 +84,16 @@ class Dataset(object):
         self.attrs = attrs
 
     def __getitem__(self, index):
+        """Returns attributes of Dataset molecule with given index.
+
+        Adds the inverse Cholesky decomposition of the overlap matrix S to the returned matrices object.
+
+        Args:
+            index (int): index of molecule to return attributes of
+
+        Returns:
+            tuple: dm_init, matrices object containing the attributes.
+        """
         mo_occ = self.mo_occ[index]
         s_chol = np.linalg.inv(np.linalg.cholesky(self.s[index]))
 
@@ -88,4 +108,13 @@ class Dataset(object):
         return dm_init, matrices
 
     def __len__(self):
+        """Returns length of self.dm_init, or number of molecules in dataset
+
+        Returns:
+            int: length of dataset: len(self.dm_init)
+        """
         return len(self.dm_init)
+
+
+
+#Past here: previous dpyscf util functions

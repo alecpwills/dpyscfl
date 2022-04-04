@@ -591,3 +591,65 @@ class PW_C(torch.nn.Module):
           - f_zeta(zeta)*g(2, rs)/params_a_fz20
 
         return f_pw(rs, zeta)
+
+#BELOW IS FROM DPYSCF
+def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', ueg_limit=True, meta_x=None, freec=False):
+    """_summary_
+
+    Args:
+        xctype (_type_): _description_
+        pretrain_loc (_type_): _description_
+        hyb_par (int, optional): _description_. Defaults to 0.
+        path (str, optional): _description_. Defaults to ''.
+        DEVICE (str, optional): _description_. Defaults to 'cpu'.
+        ueg_limit (bool, optional): _description_. Defaults to True.
+        meta_x (_type_, optional): _description_. Defaults to None.
+        freec (bool, optional): _description_. Defaults to False.
+    """
+    print('FREEC', freec)
+    if xctype == 'GGA':
+        lob = 1.804 if ueg_limit else 0
+        x = X_L(device=DEVICE,n_input=1, n_hidden=16, use=[1], lob=lob, ueg_limit=ueg_limit) # PBE_X
+        c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=ueg_limit and not freec)
+        xc_level = 2
+    elif xctype == 'MGGA':
+        lob = 1.174 if ueg_limit else 0
+        x = X_L(device=DEVICE,n_input=2, n_hidden=16, use=[1,2], lob=1.174, ueg_limit=ueg_limit) # PBE_X
+        c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3], ueg_limit=ueg_limit and not freec)
+        xc_level = 3
+    print("Loading pre-trained models from " + pretrain_loc)
+    x.load_state_dict(torch.load(pretrain_loc + '/x'))
+    c.load_state_dict(torch.load(pretrain_loc + '/c'))
+
+    if hyb_par:
+        try:
+            a = 1 - hyb_par
+            b = 1
+            d = hyb_par
+            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level )
+            scf = SCF(nsteps=25, xc=xc, exx=True,alpha=0.3)
+
+            xc.add_exx_a(d)
+            xc.exx_a.requires_grad=True
+
+            if path:
+                xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+
+        except RuntimeError:
+            a = 1 - hyb_par
+            b = 1
+            d = hyb_par
+            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, exx_a=d)
+            scf = SCF(nsteps=25, xc=xc, exx=True,alpha=0.3)
+            print(xc.exx_a)
+            if path:
+                xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+            xc.exx_a.requires_grad=True
+            print(xc.exx_a)
+    else:
+        xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, meta_x=meta_x)
+        scf = SCF(nsteps=25, xc=xc, exx=False,alpha=0.3)
+        if path:
+            xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+    scf.xc.train()
+    return scf

@@ -75,7 +75,8 @@ def get_datapoint(mol, mf, dfit = False, init_guess=False, do_fcenter=True):
                 'mo_occ': np.array(mf.mo_occ),
                 'e_ip':e_ip,
                 'ip_idx':ip_idx,
-                'e_pretrained': e_base}
+                'e_pretrained': e_base,
+                'e_base':e_base}
     if not init_guess:
         matrices.update({'dm_realinit': dm_realinit})
 
@@ -185,10 +186,8 @@ def ase_atoms_to_mol(atoms, basis='6-311++G(3df,2pd)', charge=0, spin=None):
     name = atoms.get_chemical_formula()
 
     mol_input = [[ispec, ipos] for ispec,ipos in zip(spec,pos)]
-
     c = atoms.info.get('charge', charge)
     s = atoms.info.get('spin', spin)
-
     mol = gto.M(atom=mol_input, basis=basis, spin=s, charge=c)
 
     return name, mol
@@ -207,8 +206,9 @@ def gen_mf_mol(mol, xc='', pol=False, grid_level = None):
     Returns:
         (pyscf calculation kernel, reference to method): (mf, method)
     """
-    if mol.spin == 0 and not pol:
+    if (mol.spin == 0 and not pol):
         #if zero spin and we specifically don't want spin-polarized
+        #or if just neutral H atom
         if xc:
             #if xc functional specified, RKS
             method = dft.RKS
@@ -226,10 +226,11 @@ def gen_mf_mol(mol, xc='', pol=False, grid_level = None):
     mf = method(mol)
 
     if xc:
+        print("Building grids...")
         mf.xc = xc
         mf.grids.level = grid_level if grid_level else 5
         mf.grids.build()
-
+    print("METHOD GENERATED: {}".format(method))
     return mf, method
 
 #Past here: previous dpyscf util functions
@@ -354,8 +355,11 @@ def get_rho(mf, mol, dm, grids):
     Returns:
         np.array: density on provided grid
     """
+    print("Evaluating atomic orbitals on grid.")
     ao_eval = mf._numint.eval_ao(mol, grids.coords)
-    rho = mf._numint.eval_rho(mol, ao_eval, dm)
+    print("AO Shape: {}. DM Shape: {}".format(ao_eval.shape, dm.shape))
+    print("Evaluating density on grid.")
+    rho = mf._numint.eval_rho(mol, ao_eval, dm, verbose=3)
     return rho
 
 
@@ -366,6 +370,8 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
     """_summary_
 
     .. todo:: Refactor to be in line with current implementation, get_datapoint exists already.
+
+    .. todo:: If ref_path specified, reading in the baseline energy from reference assumes 'results.traj' specified, with atoms.calc.result.energy specified.
 
     Args:
         atoms (:class:`ASE.Atoms`): The list of atoms to calculate datapoints for
@@ -421,16 +427,22 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
     if ref_path:
         if atoms.info.get('sc', True) and not atoms.info.get('reaction', False):
             print('Loading reference density')
-            dm_base = np.load(ref_path+ '/{}.dm.npy'.format(ref_index))
-            
+            dm_base = np.load(ref_path+ '/{}_{}.dm.npy'.format(ref_index, atoms.get_chemical_formula()))
+            print("Reference DM loaded. Shape: {}".format(dm_base.shape))
         if method == dft.UKS and dm_base.ndim == 2:
             dm_base = np.stack([dm_base,dm_base])*0.5
         if method == dft.RKS and dm_base.ndim == 3:
             dm_base = np.sum(dm_base, axis=0)
-        e_base =  (pd.read_csv(ref_path + '/energies', delim_whitespace=True,header=None,index_col=0).loc[ref_index]).values.flatten()[0]
-
+        dm_guess = dm_init
+        dm_init = dm_base
+        print("SHAPES: DM_GUESS = {}, DM_BASE = {}".format(dm_guess.shape, dm_init.shape))
+        #TODO: Amend the way this is done
+        e_base = read(os.path.join(ref_path, 'results.traj'), ref_index).calc.results['energy']
+        #e_base =  (pd.read_csv(ref_path + '/energies', delim_whitespace=True,header=None,index_col=0).loc[ref_index]).values.flatten()[0]
 
     if grid_level:
+        print("GRID GENERATION.")
+        print("STATS: GRID_LEVEL={}. ZYM={}. NL_CUTOFF={}. SPIN(INP/MOL)={}/{}. POL={}.".format(grid_level, zsym, nl_cutoff, spin, mol.spin, pol))
         if zsym and not nl_cutoff:
             if matrices['n_atoms'] == 1:
                 method = line
@@ -438,11 +450,13 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
                 method = half_circle
             mf.grids.coords, mf.grids.weights, L, scaling = get_symmetrized_grid(mol, mf, n_rad, n_ang, method=method)
             features.update({'L': L, 'scaling': scaling})
-        if spin != 0 or pol:
+        if (mol.spin != 0) or (pol):
+            print("Generating spin-channel densities.")
             rho_a = get_rho(mf, mol_ref, dm_init[0], mf.grids)
             rho_b = get_rho(mf, mol_ref, dm_init[1], mf.grids)
             rho = np.stack([rho_a,rho_b],axis=0)
         else:
+            print("Generating non-polarized density.")
             rho = get_rho(mf, mol_ref, dm_init, mf.grids)
 
         features.update({'rho': rho,

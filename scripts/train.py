@@ -3,18 +3,16 @@
 import pyscf
 from pyscf import gto,dft,scf
 import torch
-torch.set_default_dtype(torch.double)
-#import pyscf
-#from pyscf import gto,dft,scf
+torch.set_default_dtype(torch.single)
 
 import numpy as np
 import scipy
 from ase import Atoms
 from ase.io import read
-from dpyscf.net import *
-from dpyscf.torch_routines import *
-from dpyscf.utils import *
-from dpyscf.losses import *
+from dpyscfl.net import *
+from dpyscfl.scf import *
+from dpyscfl.utils import *
+from dpyscfl.losses import *
 from pyscf.cc import CCSD
 from functools import partial
 from ase.units import Bohr
@@ -66,71 +64,6 @@ E_mult = args.E_weight
 nonSC_mult = args.nonsc_weight
 HYBRID = (args.hyb_par > 0.0)
 
-def get_scf(path=args.modelpath):
-    print("get_scf")
-    if args.type == 'GGA':
-        print("get_scf -> args.type == GGA")
-        lob = 1.804 if ueg_limit else 0 
-        if args.polynomial:
-            print("get_scf -> args.type == GGA -> args.polynomial")
-            x = XC_L_POL(device=DEVICE, max_order=3, use=[1], lob=lob, ueg_limit=ueg_limit)
-#             c = C_L_POL(device=DEVICE, max_order=4,  use=[0, 1, 2, 3], ueg_limit=ueg_limit and not args.freec)
-            c = C_L_POL(device=DEVICE, max_order=4,  use=[0, 1, 2, 3], ueg_limit=ueg_limit and not args.freec)
-        else:
-            print("get_scf -> args.type == GGA -> ! args.polynomial")
-            x = XC_L(device=DEVICE,n_input=1, n_hidden=16, use=[1], lob=lob, ueg_limit=ueg_limit) # PBE_X
-            c = C_L(device=DEVICE,n_input=3, n_hidden=16, use=[2], ueg_limit=ueg_limit and not args.freec)
-        
-        xc_level = 2
-    elif args.type == 'MGGA':
-        print("get_scf -> args.type == MGGA")
-        lob = 1.174 if ueg_limit else 0 
-        if args.polynomial:
-            print("get_scf -> args.type == MGGA -> args.polynomial")
-            x = XC_L_POL(device=DEVICE, max_order=4, use=[1, 2], lob=0, ueg_limit=ueg_limit, sdecay=True)
-            c = C_L_POL(device=DEVICE, max_order=3,  use=[0, 1, 2, 3, 4, 5], ueg_limit=ueg_limit)
-        else:
-            print("get_scf -> args.type == MGGA -> ! args.polynomial")    
-            x = XC_L(device=DEVICE,n_input=2, n_hidden=16, use=[1,2], lob=lob, ueg_limit=ueg_limit) # PBE_X
-            c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3], ueg_limit=ueg_limit and not args.freec)
-        xc_level = 3
-    print("Loading pre-trained models from " + args.pretrain_loc)
-    x.load_state_dict(torch.load(args.pretrain_loc + '/x'))
-    c.load_state_dict(torch.load(args.pretrain_loc + '/c'))
-
-    if HYBRID:
-        try:
-            a = 1 - args.hyb_par
-            b = 1
-            d = args.hyb_par
-            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, polynomial = args.polynomial )
-            scf = SCF(nsteps=args.scf_steps, xc=xc, exx=True,alpha=0.3)
-
-            if path:
-                xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
-
-            xc.add_exx_a(d)
-            xc.exx_a.requires_grad=True
-        except RuntimeError:
-            a = 1 - args.hyb_par
-            b = 1
-            d = args.hyb_par
-            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level,exx_a=d, polynomial = args.polynomial)
-            scf = SCF(nsteps=args.scf_steps, xc=xc, exx=True,alpha=0.3)
-
-            if path:
-                xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
-            xc.exx_a.requires_grad=True
-
-    else:
-        xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, polynomial = args.polynomial, meta_x = args.meta_x)
-        scf = SCF(nsteps=args.scf_steps, xc=xc, exx=False,alpha=0.3)
-        if path:
-            xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
-
-    scf.xc.train()
-    return scf
-
 if __name__ == '__main__':
 
     if HYBRID:
@@ -161,34 +94,7 @@ if __name__ == '__main__':
     atoms = read(args.reftraj, ':')
     indices = np.arange(len(atoms)).tolist()
 
-    pop = [34, 33, 32, 10, 7, 5]
     pop = []
-#     if args.type == 'GGA':
-# #         pop = [12, 8, 7,  5, 4]
-#         pop = [12, 8, 7,  5, 4]
-#         pop = []
-#         if args.meta_x:
-#             pop = [21] + pop
-#         if HYBRID:
-# #              pop = [29, 28, 27, 26, 25, 24, 23, 22, 21, 12, 7,  5, 2] # (Hybrid GGA)
-#             pop = [21, 12, 7,  5, 2] # (Hybrid GGA)
-#             pop = [7]
-#     else:
-# #         pop = [21, 12, 11, 10, 8, 7, 5, 4, 3, 0] # (Meta-GGA)
-#         pop = [12, 10, 7, 5] # (Meta-GGA)
-#         pop = [7]
-#         if HYBRID:
-#             pop = pop + [0]
-# #         pop = [ 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 1, 0] # (Meta-GGA)
-#     # pop = []
-
-#     pop = np.arange(len(atoms)).tolist()
-#     pop.pop(-1)
-#     pop.pop(-1)
-#     pop.pop(20)
-#     pop.pop(16)
-#     pop.pop(13)
-#     pop = pop[::-1]
     print("popping specified atoms: {}".format(pop))
     [atoms.pop(i) for i in pop]
     [indices.pop(i) for i in pop]
@@ -196,9 +102,6 @@ if __name__ == '__main__':
 
     
     dataset = MemDatasetRead(args.datapath, skip=pop)
-
-#     dataset = MemDatasetRead('/gpfs/home/smdick/smdick/.data/test', skip= [12, 8, 5, 4])
-
     dataset_train = dataset
     print("dataloader")
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False) # Dont change batch size !

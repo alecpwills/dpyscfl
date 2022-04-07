@@ -76,8 +76,11 @@ def ae_loss(ref_dict,pred_dict, loss, **kwargs):
     Returns:
         [?]: loss called on weighted difference between reference and prediction
     """
+    print("AE_LOSS FUNCTION")
+    print("Flattening ref_dict, pred_dict")
     ref = torch.cat(list(atomization_energies(ref_dict).values()))
     pred = torch.cat(list(atomization_energies(pred_dict).values()))
+    print("FLAT: ref, pred: ", ref, pred)
     assert len(ref) == 1
     ref = ref.expand(pred.size()[0])
     if pred.size()[0] > 1:
@@ -120,16 +123,24 @@ def rho_loss(results, loss, **kwargs):
     Returns:
         lrho: loss called on density difference
     """
+    print("RHO_LOSS")
     rho_ref = results['rho'][0]
     ao_eval = results['ao_eval'][0]
     dm = results['dm']
+    print("RHO_REF, AO_EVAL, DM SHAPES: {}. {}. {}".format(rho_ref.shape, ao_eval.shape, dm.shape))
     if dm.ndim == 2:
+        print("2D DM.")
+        print("RESULTS N_ELEC: ", results['n_elec'])
         rho = contract('ij,ik,jk->i',
                            ao_eval[0], ao_eval[0], dm)
-        drho = torch.sqrt(torch.sum((rho-rho_ref)**2*results['grid_weights'])/results['n_elec'][0,0]**2)
+        #drho = torch.sqrt(torch.sum((rho-rho_ref)**2*results['grid_weights'])/results['n_elec'][0,0]**2)
+        drho = torch.sqrt(torch.sum((rho-rho_ref)**2*results['grid_weights'])/results['n_elec'][0]**2)
+        if torch.isnan(drho):
+            drho = torch.Tensor([0])
         lrho = loss(drho, torch.zeros_like(drho))
 
     else:
+        print("NON-2D DM")
         rho = contract('ij,ik,xjk->xi',
                            ao_eval[0], ao_eval[0], dm)
         if torch.sum(results['mo_occ']) == 1:
@@ -137,6 +148,8 @@ def rho_loss(results, loss, **kwargs):
         else:
             drho = torch.sqrt(torch.sum((rho[0]-rho_ref[0])**2*results['grid_weights'])/torch.sum(results['mo_occ'][0,0])**2 +\
                    torch.sum((rho[1]-rho_ref[1])**2*results['grid_weights'])/torch.sum(results['mo_occ'][0,1])**2)
+        if torch.isnan(drho):
+            drho = torch.Tensor([0])
         lrho = loss(drho, torch.zeros_like(drho))
     return lrho
 
@@ -230,11 +243,12 @@ def atomization_energies(energies):
     ae = {}
     for key in energies:
         if isinstance(energies[key],torch.Tensor):
-            if len(split(key)) == 1:continue
-            e_tot = energies[key].clone()
+            #if len(split(key)) == 1:continue
+            e_tot = torch.clone(energies[key])
         else:
             e_tot = np.array(energies[key])
         for symbol in split(key):
+            if len(split(key)) == 1: continue
             e_tot -= energies[symbol]
         ae[key] = e_tot
     return ae

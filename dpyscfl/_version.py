@@ -7,5 +7,5 @@ Provides dpyscfl version information.
 
 from incremental import Version
 
-__version__ = Version("dpyscfl", 22, 3, 0)
+__version__ = Version("dpyscfl", 0, 0, 0)
 __all__ = ["__version__"]

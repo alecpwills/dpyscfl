@@ -593,7 +593,7 @@ class PW_C(torch.nn.Module):
         return f_pw(rs, zeta)
 
 #BELOW IS FROM DPYSCF
-def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', ueg_limit=True, meta_x=None, freec=False):
+def get_scf(xctype, pretrain_loc='', hyb_par=0, path='', DEVICE='cpu', ueg_limit=True, meta_x=None, freec=False):
     """_summary_
 
     Args:
@@ -617,9 +617,10 @@ def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', ueg_limit=Tr
         x = X_L(device=DEVICE,n_input=2, n_hidden=16, use=[1,2], lob=1.174, ueg_limit=ueg_limit) # PBE_X
         c = C_L(device=DEVICE,n_input=4, n_hidden=16, use=[2,3], ueg_limit=ueg_limit and not freec)
         xc_level = 3
-    print("Loading pre-trained models from " + pretrain_loc)
-    x.load_state_dict(torch.load(pretrain_loc + '/x'))
-    c.load_state_dict(torch.load(pretrain_loc + '/c'))
+    if pretrain_loc:
+        print("Loading pre-trained models from " + pretrain_loc)
+        x.load_state_dict(torch.load(pretrain_loc + '/x'))
+        c.load_state_dict(torch.load(pretrain_loc + '/c'))
 
     if hyb_par:
         try:
@@ -647,9 +648,15 @@ def get_scf(xctype, pretrain_loc, hyb_par=0, path='', DEVICE='cpu', ueg_limit=Tr
             xc.exx_a.requires_grad=True
             print(xc.exx_a)
     else:
-        xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, meta_x=meta_x)
+        #xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, meta_x=meta_x)
+        xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level)
         scf = SCF(nsteps=25, xc=xc, exx=False,alpha=0.3)
         if path:
-            xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+            try:
+                xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+            except AttributeError:
+                # AttributeError: 'RecursiveScriptModule' object has no attribute 'copy'
+                #occurs when loading finished xc from xcdiff
+                xc = torch.jit.load(path)
     scf.xc.train()
     return scf

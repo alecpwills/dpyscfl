@@ -12,7 +12,7 @@ def get_datapoint(mol, mf, dfit = False, init_guess=False, do_fcenter=True):
 
     Args:
         mol (:class:`pyscf.gto.Mol`): pyscf molecule object
-        mf (:class:`pyscf.scf.X`): PREVIOUS RUN kernel for scf calculation, e.g. scf.RKS(mol)
+        mf (:class:`pyscf.scf.X`): PREVIOUSLY RUN kernel for scf calculation, e.g. scf.RKS(mol)
         dfit (:class:`bool`, optional): Whether or not to use density fitting. Defaults to False.
         init_guess (:class:`bool`, optional): Whether to use pyscf's guessed DM as a start. Defaults to False.
         do_fcenter (:class:`bool`, optional): Whether to do calculate this integral. Defaults to True.
@@ -53,7 +53,11 @@ def get_datapoint(mol, mf, dfit = False, init_guess=False, do_fcenter=True):
 
     e_base = mf.energy_tot()
     e_ip = mf.mo_energy[...,:-1][np.diff(mf.mo_occ).astype(bool)]
-    if len(e_ip) == 2:
+    print("DATAPOINT E_BASE: ", e_base)
+    print("DATAPOINT MO_ENERGY: ", mf.mo_energy)
+    print("DATAPOINT E_IP: ", e_ip)
+    print("DATAPOINT MO_OCC: ", mf.mo_occ)
+    if len(e_ip) == 2 and len(mf.mo_occ) == 2:
         e_ip = e_ip[0]
         ip_idx = np.where(np.diff(mf.mo_occ).astype(bool))[1][0]
     else:
@@ -64,6 +68,7 @@ def get_datapoint(mol, mf, dfit = False, init_guess=False, do_fcenter=True):
     n_atoms = mol.natm
 
     matrices = {'dm_init':dm_init,
+                'dm':dm_base,
                 'v':v,
                 't':t,
                 's':s,
@@ -85,6 +90,8 @@ def get_datapoint(mol, mf, dfit = False, init_guess=False, do_fcenter=True):
                          'df_3c': df_3c})
     else:
         matrices.update({'eri':eri})
+    if do_fcenter:
+        matrices.update({'f_center':fcenter})
 
     features = {}
     features.update({'L': np.eye(dm_init.shape[-1]), 'scaling': np.ones([dm_init.shape[-1]]*2)})
@@ -233,6 +240,17 @@ def gen_mf_mol(mol, xc='', pol=False, grid_level = None):
     print("METHOD GENERATED: {}".format(method))
     return mf, method
 
+def fractional_matrices_combine(base, charge, fractional):
+    print("FRACTIONAL SHAPES:")
+    print("BASE DM: ", base['dm'].shape)
+    print("CHARGE DM: ", charge['dm'].shape)
+    matricesFrac = {}
+    for key in list(base.keys()):
+        print(key)
+        matricesFrac[key] = (1-fractional)*base[key]+fractional*charge[key]
+    return matricesFrac
+
+
 #Past here: previous dpyscf util functions
 #TODO: Bring to current status -- namely, get_datapoint is already defined so rewrite for consistency
 def get_ml_ovlp(mol, auxmol):
@@ -328,6 +346,7 @@ class MemDatasetRead(object):
         #TODO: remove these commented, Dataset no longer pops these
         #Etot = matrices.pop('Etot')
         #dm = matrices.pop('dm')
+        matrices['s_chol'] = s_oh
         matrices['mo_occ'] = mo_occ
         matrices['s_inv_oh'] = s_inv_oh
         matrices['s_oh'] = s_oh
@@ -421,10 +440,48 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
     mf.kernel()
 
     matrices = get_datapoint(mol=mol, mf=mf, dfit=dfit, init_guess=init_guess, do_fcenter=do_fcenter)
+
+    if atoms.info.get('fractional', None):
+        print("FRACTIONAL FLAG -- CALCULATING CHARGED SYSTEM")
+        _, molFrac = ase_atoms_to_mol(atoms, basis=basis, charge=mol.charge+1, spin=None)
+        #Must use same method as base atom for shape concerns
+        mfFrac = method(molFrac)
+        if xc:
+            print("Building charged grids...")
+            mfFrac.xc = xc
+            mfFrac.grids.level = grid_level if grid_level else 5
+            mfFrac.grids.build()
+
+        mfFrac.kernel()
+        matricesFrac = get_datapoint(mol=molFrac, mf=mfFrac, dfit=dfit, init_guess=init_guess, do_fcenter=do_fcenter)
+
+        matrices = fractional_matrices_combine(matrices, matricesFrac, atoms.info['fractional'])
+
+    
+
     dm_init = matrices['dm_init']
     e_base = matrices['e_base']
 
-    if ref_path:
+    if atoms.info.get('fractional', None):
+        assert atoms.info['baseRef'], "Atoms flagged as Fractional: Need Neutral Reference Path"
+        assert atoms.info['chargeRef'], "Atoms flagged as Fractional: Need Charged Reference Path"
+        if atoms.info.get('sc', True) and not atoms.info.get('reaction', False):
+            print('Loading reference density')
+            dm0_base = np.load(atoms.info['baseRef']+ '/{}_{}.dm.npy'.format(atoms.info['baseidx'], atoms.get_chemical_formula()))
+            dmC_base = np.load(atoms.info['chargeRef']+ '/{}_{}.dm.npy'.format(atoms.info['baseidx'], atoms.get_chemical_formula()))
+            dm_base = (1-atoms.info['fractional'])*dm0_base + atoms.info['fractional']*dmC_base
+            print("Reference DM loaded. Shape: {}".format(dm_base.shape))
+        if method == dft.UKS and dm_base.ndim == 2:
+            dm_base = np.stack([dm_base,dm_base])*0.5
+        if method == dft.RKS and dm_base.ndim == 3:
+            dm_base = np.sum(dm_base, axis=0)
+        dm_guess = dm_init
+        dm_init = dm_base
+        print("SHAPES: DM_GUESS = {}, DM_BASE = {}".format(dm_guess.shape, dm_init.shape))
+        e0_base = read(os.path.join(atoms.info['baseRef'], 'results.traj'), atoms.info['baseidx']).calc.results['energy']
+        eC_base = read(os.path.join(atoms.info['chargeRef'], 'results.traj'), atoms.info['baseidx']).calc.results['energy']
+        e_base = (1-atoms.info['fractional'])*e0_base + atoms.info['fractional']*eC_base
+    elif ref_path and not atoms.info.get('fractional', None):
         if atoms.info.get('sc', True) and not atoms.info.get('reaction', False):
             print('Loading reference density')
             dm_base = np.load(ref_path+ '/{}_{}.dm.npy'.format(ref_index, atoms.get_chemical_formula()))

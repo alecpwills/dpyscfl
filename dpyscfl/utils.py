@@ -6,7 +6,7 @@ from ase.io import read
 import pandas as pd
 import pickle, os, sys
 
-def get_datapoint(mol, mf, dfit = False, init_guess=False, do_fcenter=True):
+def get_datapoint(mol, mf, dfit = True, init_guess=False, do_fcenter=True):
     """
     Builds all matrices needed for SCF calculations (the ones considered constant)
 
@@ -95,9 +95,9 @@ def get_datapoint(mol, mf, dfit = False, init_guess=False, do_fcenter=True):
 
     features = {}
     features.update({'L': np.eye(dm_init.shape[-1]), 'scaling': np.ones([dm_init.shape[-1]]*2)})
-
-    features.update({'ao_eval':mf._numint.eval_ao(mol, mf.grids.coords, deriv=2),
-                    'grid_weights':mf.grids.weights})
+    if mf.xc:
+        features.update({'ao_eval':mf._numint.eval_ao(mol, mf.grids.coords, deriv=2),
+                        'grid_weights':mf.grids.weights})
 
 
     matrices.update(features)
@@ -237,6 +237,8 @@ def gen_mf_mol(mol, xc='', pol=False, grid_level = None):
         mf.xc = xc
         mf.grids.level = grid_level if grid_level else 5
         mf.grids.build()
+    else:
+        mf.xc = ''
     print("METHOD GENERATED: {}".format(method))
     return mf, method
 
@@ -384,7 +386,7 @@ def get_rho(mf, mol, dm, grids):
 
 def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
                   nl_cutoff=0, grid_deriv=1, init_guess = False, ml_basis='',
-                  do_fcenter=True, zsym = False, n_rad=20,n_ang=10, spin=0, pol=False,
+                  do_fcenter=True, zsym = False, n_rad=20,n_ang=10, spin=None, pol=False,
                   ref_basis='', ref_path = '', ref_index=0, dfit=True):
     """_summary_
 

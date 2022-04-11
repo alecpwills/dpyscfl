@@ -55,6 +55,20 @@ args = parser.parse_args()
 ueg_limit = not args.free
 HYBRID = (args.hyb_par > 0.0)
 
+def scf_wrap(scf, dm_in, matrices, sc, molecule=''):
+    try:
+        results = scf(dm_in, matrices, sc)
+    except:
+        print("========================================================")
+        print("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
+        print("SCF CALCULATION FAILED")
+        print("SCF Calculation failed for {}, likely eigen-decomposition".format(molecule))
+        print("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
+        print("========================================================")
+        results = None
+    return results
+
+
 def get_optimizer(model, path='', hybrid=HYBRID):
     if hybrid:
             optimizer = torch.optim.Adam(list(model.parameters()) + [model.xc.exx_a],
@@ -232,20 +246,6 @@ if __name__ == '__main__':
     chkpt_idx = 0
     validate_every = 10
 
-    def scf_wrap(scf, dm_in, matrices, sc):
-        try:
-            results = scf(dm_in, matrices, sc)
-        except:
-            print("========================================================")
-            print("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
-            print("SCF CALCULATION FAILED")
-            print("SCF Calculation failed for {}, likely eigen-decomposition".format(molecule))
-            print("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
-            print("========================================================")
-            results = None
-        return results
-
-
     for epoch in range(100000):
         encountered_nan = True
         while(encountered_nan):
@@ -302,7 +302,7 @@ if __name__ == '__main__':
                             print("***************************")
                         #CALCULATION
                         print("SCF CALCULATION")
-                        results = scf_wrap(scf, dm_in, matrices, sc)
+                        results = scf_wrap(scf, dm_in, matrices, sc, molecule=molecule)
                         if results == None:
                             break
                         #Add matrix keys to results dict

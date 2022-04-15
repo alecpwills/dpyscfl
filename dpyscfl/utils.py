@@ -518,9 +518,11 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
             print("Generating non-polarized density.")
             rho = get_rho(mf, mol_ref, dm_init, mf.grids)
 
-        features.update({'rho': rho,
-                         'ao_eval':mf._numint.eval_ao(mol, mf.grids.coords, deriv=grid_deriv),
-                         'grid_weights':mf.grids.weights})
+        #features.update({'rho': rho,
+        #                 'ao_eval':mf._numint.eval_ao(mol, mf.grids.coords, deriv=grid_deriv),
+        #                 'grid_weights':mf.grids.weights})
+        #ao-eval, grid weights handled in get_datapoint
+        features.update({'rho':rho})
 
     matrices.update(features)
 

@@ -1,5 +1,6 @@
 import torch
 import scipy
+import sys
 from opt_einsum import contract
 
 
@@ -241,6 +242,14 @@ class SCF(torch.nn.Module):
         deltadm = []
         nsteps = self.nsteps
 
+        if not self.xc.training:
+            #if not training, backpropagation doesn't happen so don't need derivatives beyond
+            #calculation at a given step
+            create_graph = False
+        else:
+            create_graph = True
+
+
         # SCF iteration loop
         for step in range(nsteps):
             alpha = (self.alpha)**(step)+0.3
@@ -270,9 +279,7 @@ class SCF(torch.nn.Module):
 
                 exc = self.xc(dm)
 
-
-                vxc = torch.autograd.functional.jacobian(self.xc, dm, create_graph=True)
-
+                vxc = torch.autograd.functional.jacobian(self.xc, dm, create_graph=create_graph)
                 # Restore correct symmetry for vxc
                 if vxc.dim() > 2:
                     vxc = contract('ij,xjk,kl->xil',L,vxc,L.T)
@@ -288,6 +295,7 @@ class SCF(torch.nn.Module):
 
                 #Add random noise to potential to avoid degeneracies in EVs
                 if self.xc.training and sc:
+                    print("Noise generation to avoid potential degeneracies")
                     noise = torch.abs(torch.randn(vxc.size(),device=vxc.device)*1e-8)
                     noise = noise + torch.transpose(noise,-1,-2)
                     veff = veff + noise
@@ -298,9 +306,8 @@ class SCF(torch.nn.Module):
 
 
             f = get_fock(hc, veff)
-            if sc:
-                mo_e, mo_coeff = self.eig(f, s_chol)
-                dm = self.make_rdm1(mo_coeff, mo_occ)
+            mo_e, mo_coeff = self.eig(f, s_chol)
+            dm = self.make_rdm1(mo_coeff, mo_occ)
 
             e_tot = self.energy_tot(dm_old, hc, veff-vxc)+ e_nuc + exc
             E.append(e_tot)

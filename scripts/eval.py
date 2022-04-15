@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 import torch
-torch.set_default_dtype(torch.half)
+torch.set_default_dtype(torch.float)
 import pyscf
 import numpy as np
 from ase.io import read
@@ -15,13 +15,13 @@ from opt_einsum import contract
 
 
 process = psutil.Process(os.getpid())
-#dpyscf_dir = os.environ.get('DPYSCF_DIR','..')
 DEVICE = 'cpu'
 
-parser = argparse.ArgumentParser(description='Train xc functional')
+parser = argparse.ArgumentParser(description='Evaluate xc functional')
 parser.add_argument('--pretrain_loc', action='store', type=str, help='Location of pretrained models (should be directory containing x and c)')
 parser.add_argument('--type', action='store', choices=['GGA','MGGA'])
 parser.add_argument('--xc', action="store", default='', type=str, help='XC to use as reference evaluation')
+parser.add_argument('--basis', metavar='basis', type=str, nargs = '?', default='6-311++G(3df,2pd)', help='basis to use. default 6-311++G(3df,2pd)')
 parser.add_argument('--datapath', action='store', type=str, help='Location of precomputed matrices (run prep_data first)')
 parser.add_argument('--evaltraj', action='store', type=str, help='Location of test trajectories')
 parser.add_argument('--modelpath', metavar='modelpath', type=str, default='', help='Net Checkpoint location to continue training')
@@ -84,9 +84,14 @@ if __name__ == '__main__':
     fails = []
     grid_level = 1 if args.xc else 0
     for idx, atom in enumerate(atoms):
-        print("================= {}:    {} ======================".format(idx, atom.get_chemical_formula()))
-        
-        atom_E, _, atom_mats = old_get_datapoint(atoms=atom, xc=args.xc, grid_level=grid_level)
+        formula = atom.get_chemical_formula()
+        print("================= {}:    {} ======================".format(idx, formula))
+        print("Getting Datapoint")
+        if 'F' in atom.get_chemical_formula():
+            fails.append((idx, formula))
+            continue
+        atom_E, _, atom_mats = old_get_datapoint(atoms=atom, xc=args.xc, grid_level=grid_level,
+                                                basis=args.basis)
         if not args.keeprho:
             print('Purging rho')
             atom_mats.pop('rho', None)
@@ -96,10 +101,11 @@ if __name__ == '__main__':
         dloader = torch.utils.data.DataLoader(dset, batch_size=1)
 
         inputs = next(iter(dloader))
-#        results = scf_wrap(scf, inputs[0], inputs[1], sc=True, molecule=atom.get_chemical_formula())
-        results = scf(inputs[0], inputs[1], sc=True)
+        print("CALCULATING PREDICTION")
+        results = scf_wrap(scf, inputs[0], inputs[1], sc=True, molecule=atom.get_chemical_formula())
+#        results = scf(inputs[0], inputs[1], sc=True)
         if not results:
-            fails.append(atom.get_chemical_formula())
+            fails.append((idx, formula))
             continue
 
         if args.writeref:

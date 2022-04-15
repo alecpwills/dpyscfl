@@ -65,7 +65,11 @@ def get_size(obj, seen=None):
     #elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, bytearray)):
     #    size += sum([get_size(i, seen) for i in obj])
     return size
-skips = ['C5H8']
+
+#DESKTOP SKIPS
+#skips = ['C5H8']
+#SEAWULF SKIPS
+skips = []
 if __name__ == '__main__':
     if args.writeeach:
         try:
@@ -101,9 +105,10 @@ if __name__ == '__main__':
         e_ref = e_refs[idx]
         print("================= {}:    {} ======================".format(idx, formula))
         print("Getting Datapoint")
-        if ('F3' in formula) or (formula in skips):
-            fails.append((idx, formula))
-            continue
+        #DESKTOP IF
+        #if ('F3' in formula) or (formula in skips):
+        #    fails.append((idx, formula))
+        #    continue
 
         atom_E, _, atom_mats = old_get_datapoint(atoms=atom, xc=args.xc, grid_level=grid_level,
                                                 basis=args.basis)

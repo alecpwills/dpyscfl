@@ -50,11 +50,44 @@ parser.add_argument('--meta_x', metavar='meta_x',type=float, default=None, help=
 parser.add_argument('--rho_alt', action='store_true', help='Alternative rho loss on total density')
 parser.add_argument('--radical_factor', metavar='radical_factor',type=float, default=1.0, help='')
 parser.add_argument('--forcedensloss', action='store_true', default=False, help='Make training use density loss.')
+parser.add_argument('--freezeappend', action='store_true', default=False, help='If flagged, freezes network and adds layer between output layer and last hidden layer. The new layer is not frozen.')
 args = parser.parse_args()
 
 ueg_limit = not args.free
 HYBRID = (args.hyb_par > 0.0)
 
+
+def freeze_net(nn):
+    for i in nn.parameters():
+        i.requires_grad = False
+def unfreeze_net(nn):
+    for i in nn.parameters():
+        i.requires_grad = True
+def freeze_append_xc(model):
+    freeze_net(model.xc)
+    #Implemented as a Module List of the X and C networks.
+    chil = [i for i in model.xc.children() if isinstance(i, torch.nn.ModuleList)][0]
+    #X network first. Find the children of X, i.e. the Linear/GELUs
+    xl = [i for i in chil[0].net.children()]
+    #C network second. Find the children of C, i.e. the Linear/GELUs
+    cl = [i for i in chil[1].net.children()]
+    #Pop the output layer of each net.
+    xout = xl.pop()
+    cout = cl.pop()
+    #duplicate last layer and GELU
+    xl += xl[-2:]
+    cl += cl[-2:]
+    #set last layer as unfrozen
+    for p in xl[-2].parameters():
+        p.requires_grad = True
+    for p in cl[-2].parameters():
+        p.requires_grad = True
+    #Readd output layer.
+    xl.append(xout)
+    cl.append(cout)
+    #Set the new layers as the networks to use.
+    chil[0].net = torch.nn.Sequential(*xl)
+    chil[1].net = torch.nn.Sequential(*cl)
 def scf_wrap(scf, dm_in, matrices, sc, molecule=''):
     try:
         results = scf(dm_in, matrices, sc)
@@ -176,6 +209,12 @@ if __name__ == '__main__':
     else:
         scf = get_scf(args.type)
 
+    if args.freezeappend:
+        print("\n ================================= \n")
+        print("FREEZING SCF MODEL.XC AND APPENDING NEW LAYER")
+        print("\n ================================= \n")
+        freeze_append_xc(scf)
+
     if args.testrun:
         #TODO: fix this, dataloader doesn't have dm_ref
         print("\n ======= Starting testrun ====== \n\n")
@@ -218,7 +257,7 @@ if __name__ == '__main__':
     PRINT_EVERY=1
     skip_steps = max(5, args.scf_steps - 10)
 
-    optimizer, scheduler = get_optimizer(scf)
+    optimizer, scheduler = get_optimizer(scf, path=args.optimpath)
 
     AE_mult = 1
     #Loss Functions -- Density

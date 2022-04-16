@@ -103,7 +103,12 @@ if __name__ == '__main__':
     fails = []
     grid_level = 1 if args.xc else 0
     endidx = len(atoms) if args.endidx == -1 else args.endidx
-    for idx, atom in enumerate(atoms[args.startidx:endidx]):
+    for idx, atom in enumerate(atoms):
+        #manually skip for preservation of reference file lookups
+        if idx < args.startidx:
+            continue
+        if idx > endidx:
+            continue
         formula = atom.get_chemical_formula()
         symbols = atom.symbols
         dmp = os.path.join(args.refpath, '{}_{}.dm.npy'.format(idx, symbols))

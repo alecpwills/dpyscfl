@@ -31,6 +31,10 @@ parser.add_argument('--writeeach', action='store', default='', help='where to wr
 parser.add_argument('--writeref', action='store_true', default=False, help='write reference dictionaries')
 parser.add_argument('--writepred', action='store_true', default=False, help='write prediction dictionaries')
 parser.add_argument('--keeprho', action='store_true', default=False, help='whether to keep rho in matrix')
+parser.add_argument('--startidx', action='store', default=0, type=int, help='Index in reference traj to start on.')
+parser.add_argument('--endidx', action='store', default=-1, type=int, help='Index in reference traj to end on.')
+parser.add_argument('--skipidcs', nargs='*', type=int, help="Indices to skip during evaluation. Space separated list of ints")
+parser.add_argument('--skipforms', nargs='*', type=str, help='Formulas to skip during evaluation')
 args = parser.parse_args()
 
 def scf_wrap(scf, dm_in, matrices, sc, molecule=''):
@@ -69,7 +73,8 @@ def get_size(obj, seen=None):
 #DESKTOP SKIPS
 #skips = ['C5H8']
 #SEAWULF SKIPS
-skips = []
+skipidcs = args.skipidcs if args.skipidcs else []
+skipforms = args.skipforms if args.skipforms else []
 if __name__ == '__main__':
     if args.writeeach:
         try:
@@ -97,7 +102,8 @@ if __name__ == '__main__':
     loss_dct = {"E":0}
     fails = []
     grid_level = 1 if args.xc else 0
-    for idx, atom in enumerate(atoms):
+    endidx = len(atoms) if args.endidx == -1 else args.endidx
+    for idx, atom in enumerate(atoms[args.startidx:endidx]):
         formula = atom.get_chemical_formula()
         symbols = atom.symbols
         dmp = os.path.join(args.refpath, '{}_{}.dm.npy'.format(idx, symbols))
@@ -105,11 +111,10 @@ if __name__ == '__main__':
         e_ref = e_refs[idx]
         print("================= {}:    {} ======================".format(idx, formula))
         print("Getting Datapoint")
-        #DESKTOP IF
-        #if ('F3' in formula) or (formula in skips):
-        #    fails.append((idx, formula))
-        #    continue
-
+        if (formula in skipforms) or (idx in skipidcs):
+            print("SKIPPING")
+            fails.append((idx, formula))
+            continue
         atom_E, _, atom_mats = old_get_datapoint(atoms=atom, xc=args.xc, grid_level=grid_level,
                                                 basis=args.basis)
         if not args.keeprho:

@@ -1,3 +1,4 @@
+from multiprocessing.sharedctypes import Value
 import torch
 torch.set_default_dtype(torch.double)
 from torch.nn import Sequential as Seq, Linear, ReLU,Sigmoid,GELU
@@ -242,6 +243,7 @@ class XC(torch.nn.Module):
             # Create density (and gradients) from atomic orbitals evaluated on grid
             # and density matrix
             # rho[ijsp]: del_i phi del_j phi dm (s: spin, p: grid point index)
+            #print("FORWARD PASS IN XC. AO_EVAL SHAPE, DM SHAPE: ", ao_eval.shape, dm.shape)
             rho = contract('xij,yik,...jk->xy...i', ao_eval, ao_eval, dm)
             rho0 = rho[0,0]
             drho = rho[0,1:4] + rho[1:4,0]
@@ -286,7 +288,6 @@ class XC(torch.nn.Module):
                                                     tau_b.unsqueeze(-1),
                                                     non_loc_a,
                                                     non_loc_b],dim=-1))
-
             Exc += torch.sum(((rho0_a + rho0_b)*exc[:,0])*self.grid_weights)
 
 
@@ -344,9 +345,17 @@ class XC(torch.nn.Module):
                         descr_dict['c'] = descr_method(rho0_a, rho0_b, gamma_a, gamma_b,
                                                                          gamma_ab, nl_a, nl_b, tau_a, tau_b, spin_scaling = False)
                     descr = descr_dict['c']
-
+                    #print("DESCR: ", descr)
+                    #print("DESCR MAX:", torch.max(descr))
+                    #print("DESCR MIN: ", torch.min(descr))
+                    #print("GRID MODEL: ", grid_model)
+                    for name, param in grid_model.named_parameters():
+                        if torch.isnan(param).any():
+                            print("NANS IN NETWORK WEIGHT -- {}".format(name))
+                            raise ValueError("NaNs in Network Weights.")
                     exc = grid_model(descr,
                                       grid_coords = self.grid_coords)
+                    #print("EXC GRID_MODEL C: ", exc)
 
                     if self.pw_mult:
                         exc_ab += (1 + exc)*self.pw_model(rs, zeta)
@@ -362,6 +371,7 @@ class XC(torch.nn.Module):
                     exc = grid_model(descr,
                                   grid_coords = self.grid_coords)
 
+                    #print("EXC GRID_MODEL X: ", exc)
 
                     if self.heg_mult:
                         exc_a += (1 + exc[0])*self.heg_model(2*rho0_a_ueg)*(1-self.exx_a)

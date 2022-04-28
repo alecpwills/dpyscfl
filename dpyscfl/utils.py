@@ -1,6 +1,7 @@
 import numpy as np
 import scipy
 from pyscf import gto, dft, scf , df
+import pylibnxc
 from pyscf.dft import radi
 from ase.io import read
 import pandas as pd
@@ -199,7 +200,7 @@ def ase_atoms_to_mol(atoms, basis='6-311++G(3df,2pd)', charge=0, spin=None):
 
     return name, mol
 
-def gen_mf_mol(mol, xc='', pol=False, grid_level = None):
+def gen_mf_mol(mol, xc='', pol=False, grid_level = None, nxc = False):
     """Generate a pyscf calculation kernel based on provided inputs.
 
     Args:
@@ -213,23 +214,29 @@ def gen_mf_mol(mol, xc='', pol=False, grid_level = None):
     Returns:
         (pyscf calculation kernel, reference to method): (mf, method)
     """
+    if nxc:
+        dftns = pylibnxc.pyscf
+        hfns = scf
+    else:
+        dftns = dft
+        hfns = scf
     if (mol.spin == 0 and not pol):
         #if zero spin and we specifically don't want spin-polarized
         #or if just neutral H atom
         if xc:
             #if xc functional specified, RKS
-            method = dft.RKS
+            method = dftns.RKS
         else:
             #else assume RHF
-            method = scf.RHF
+            method = hfns.RHF
     else:
         #if net spin, must do spin polarized
         if xc:
             #xc functional specified, UKS
-            method = dft.UKS
+            method = dftns.UKS
         else:
             #none specified, UHF
-            method = scf.UHF
+            method = hfns.UHF
     mf = method(mol)
 
     if xc:
@@ -417,6 +424,8 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
     Returns:
         (float, np.array, dict): (Baseline energy from mf.energy_tot(), 3D Identity matrix, dict of matrices generated)
     """
+    #Force False on things outdated until refactor
+    zsym = False
 
     print(atoms)
     print(basis)
@@ -503,12 +512,14 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
         print("GRID GENERATION.")
         print("STATS: GRID_LEVEL={}. ZYM={}. NL_CUTOFF={}. SPIN(INP/MOL)={}/{}. POL={}.".format(grid_level, zsym, nl_cutoff, spin, mol.spin, pol))
         if zsym and not nl_cutoff:
+            #outdated, skip this by prior zsym = False
             if matrices['n_atoms'] == 1:
                 method = line
             else:
                 method = half_circle
             mf.grids.coords, mf.grids.weights, L, scaling = get_symmetrized_grid(mol, mf, n_rad, n_ang, method=method)
             features.update({'L': L, 'scaling': scaling})
+        #If net spin or force polarized calculation
         if (mol.spin != 0) or (pol):
             print("Generating spin-channel densities.")
             rho_a = get_rho(mf, mol_ref, dm_init[0], mf.grids)
@@ -518,10 +529,10 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
             print("Generating non-polarized density.")
             rho = get_rho(mf, mol_ref, dm_init, mf.grids)
 
+        #ao-eval, grid weights handled in get_datapoint
         #features.update({'rho': rho,
         #                 'ao_eval':mf._numint.eval_ao(mol, mf.grids.coords, deriv=grid_deriv),
         #                 'grid_weights':mf.grids.weights})
-        #ao-eval, grid weights handled in get_datapoint
         features.update({'rho':rho})
 
     matrices.update(features)

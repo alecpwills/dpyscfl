@@ -2,7 +2,7 @@
 # coding: utf-8
 import torch
 torch.set_default_dtype(torch.float)
-
+torch.autograd.set_detect_anomaly(True)
 import numpy as np
 from ase.io import read
 from dpyscfl.net import *
@@ -12,11 +12,7 @@ from dpyscfl.losses import *
 from functools import partial
 from ase.units import Bohr
 from datetime import datetime
-import os
-import psutil
-import tarfile
-import argparse
-import json
+import os, psutil, tarfile, argparse, json
 
 process = psutil.Process(os.getpid())
 #dpyscf_dir = os.environ.get('DPYSCF_DIR','..')
@@ -50,7 +46,12 @@ parser.add_argument('--meta_x', metavar='meta_x',type=float, default=None, help=
 parser.add_argument('--rho_alt', action='store_true', help='Alternative rho loss on total density')
 parser.add_argument('--radical_factor', metavar='radical_factor',type=float, default=1.0, help='')
 parser.add_argument('--forcedensloss', action='store_true', default=False, help='Make training use density loss.')
-parser.add_argument('--freezeappend', action='store_true', default=False, help='If flagged, freezes network and adds layer between output layer and last hidden layer. The new layer is not frozen.')
+parser.add_argument('--freezeappend',  type=int, action='store', default=0, help='If flagged, freezes network and adds N duplicate layers between output layer and last hidden layer. The new layer is not frozen.')
+parser.add_argument('--gradientclip', action='store', type=float, default=0, help='If set, clips gradient so no explosions in backpropagation')
+parser.add_argument('--gclipnorm', action='store_true', default=False, help='Flag only works with gradientclip. If flagged and gcliphook not, clips norm after completion of backpropagation')
+parser.add_argument('--gcliphook', action='store_true', default=False, help='Flag only works with gradientclip. If flagged and gclipnorm not, clips norm during backpropagation')
+parser.add_argument('--checkgrad', action='store_true', default=False, help='If flagged, executes loop over scf.xc parameters to print gradients')
+parser.add_argument('--normael', action='store_true', default=False, help='normalize atomization energy loss')
 args = parser.parse_args()
 
 ueg_limit = not args.free
@@ -63,7 +64,7 @@ def freeze_net(nn):
 def unfreeze_net(nn):
     for i in nn.parameters():
         i.requires_grad = True
-def freeze_append_xc(model):
+def freeze_append_xc(model, n):
     freeze_net(model.xc)
     #Implemented as a Module List of the X and C networks.
     chil = [i for i in model.xc.children() if isinstance(i, torch.nn.ModuleList)][0]
@@ -75,13 +76,15 @@ def freeze_append_xc(model):
     xout = xl.pop()
     cout = cl.pop()
     #duplicate last layer and GELU
-    xl += xl[-2:]
-    cl += cl[-2:]
+    xl += xl[-2:]*n
+    cl += cl[-2:]*n
     #set last layer as unfrozen
-    for p in xl[-2].parameters():
-        p.requires_grad = True
-    for p in cl[-2].parameters():
-        p.requires_grad = True
+    for p in xl[-2*n:]:
+        for par in p.parameters():
+            par.requires_grad = True
+    for p in cl[-2*n:]:
+        for par in p.parameters():
+            par.requires_grad = True
     #Readd output layer.
     xl.append(xout)
     cl.append(cout)
@@ -91,11 +94,12 @@ def freeze_append_xc(model):
 def scf_wrap(scf, dm_in, matrices, sc, molecule=''):
     try:
         results = scf(dm_in, matrices, sc)
-    except:
+    except Exception as e:
         print("========================================================")
         print("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
         print("SCF CALCULATION FAILED")
         print("SCF Calculation failed for {}, likely eigen-decomposition".format(molecule))
+        print("{}".format(e))
         print("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
         print("========================================================")
         results = None
@@ -146,6 +150,9 @@ if __name__ == '__main__':
     print("READING REFERENCE TRAJECTORY.")
     atoms = read(args.reftraj, ':')
     indices = np.arange(len(atoms)).tolist()
+    #Some molecules in the trajectory are not needed to reproduce xcdiff training set.
+    #But don't pop them, because indexing important.
+    skips = ['O2', 'Cl2', 'HCl']
 
     pop = []
     print("popping specified atoms: {}".format(pop))
@@ -159,33 +166,42 @@ if __name__ == '__main__':
     print("LOADING DATASET INTO PYTORCH")
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False) # Dont change batch size !
     dataloader_train = torch.utils.data.DataLoader(dataset_train, batch_size=1, shuffle=False) # Dont change batch size !
-    print("PARSING MOLECULES")
+    
+    print("PARSING NON-ATOMIC NON-REACTION MOLECULES")
     molecules = {'{:3d}'.format(idx) + ''.join(a.get_chemical_symbols()): [idx] for idx, a in enumerate(atoms) if len(a.positions) > 1 and not a.info.get('reaction') }
     print(molecules)
-    print("PARSING PURE ATOMS")
-    pure_atoms = {''.join(a.get_chemical_symbols()): [idx] for idx, a in enumerate(atoms) if len(a.positions) == 1 and not a.info.get('reaction') and not a.info.get('fractional') and not a.info.get('charge')}
+    print("PARSING NEUTRAL, PURE NON-REACTION ATOMS. CHARGE FLAG NOT SET.")
+    pure_atoms = {''.join(a.get_chemical_symbols()): [idx] for idx, a in enumerate(atoms) if len(a.positions) == 1 and not a.info.get('reaction') and not a.info.get('fractional') and not a.info.get('charge') and not a.info.get('supp')}
     print(pure_atoms)
     molecules.update(pure_atoms)
-    print("PARSING WHOLLY CHARGED ATOMS")
-    c_atoms = {''.join(a.get_chemical_symbols())+'_c{}'.format(a.info['charge']): [idx] for idx, a in enumerate(atoms) if len(a.positions)==1 and a.info.get('charge')}
+    print("PARSING SUPPLEMENTAL NEUTRAL, PURE ATOMS (FROM FRAC DATASET)")
+    n_atoms = {''.join(a.get_chemical_symbols())+'_n0': [idx] for idx, a in enumerate(atoms) if len(a.positions)==1 and a.info.get('supp') and not a.info.get('charge')}
+    print(n_atoms)
+    molecules.update(n_atoms)
+    print("PARSING SUPPLEMENTAL CHARGED, PURE ATOMS")
+    c_atoms = {''.join(a.get_chemical_symbols())+'_c{}'.format(a.info['charge']): [idx] for idx, a in enumerate(atoms) if len(a.positions)==1 and a.info.get('supp') and a.info.get('charge')}
     print(c_atoms)
     molecules.update(c_atoms)
-    print("PARSING FRACTIONAL ATOMS")
-    frac_atoms = {''.join(a.get_chemical_symbols())+'_f{}'.format(a.info['fractional']): [idx] for idx, a in enumerate(atoms) if len(a.positions)==1 and a.info.get('fractional')}
+    print("PARSING SUPPLEMENTAL FRACTIONAL ATOMS")
+    frac_atoms = {''.join(a.get_chemical_symbols())+'_f{}'.format(a.info['fractional']): [idx] for idx, a in enumerate(atoms) if len(a.positions)==1 and a.info.get('supp') and a.info.get('fractional')}
     print(frac_atoms)
     molecules.update(frac_atoms)
     def split(el):
             import re
+            #Splits a string on capital letter sequences
             res_list = [s for s in re.split("([A-Z][^A-Z]*)", el) if s]
             return res_list
 
-    #for molecule in molecules:
-    #    comp = []
-    #    for a in split(molecule[3:]):
-    #        comp.append(pure_atoms[a][0])
-    #    molecules[molecule] += comp
-
-    a_count = {a: np.sum([a in molecules[mol] for mol in molecules]) for a in np.unique([m  for mol in molecules for m in molecules[mol]])}
+    for molecule in molecules:
+        comp = []
+        #ignore _ atoms, charged or fractional
+        if '_' in molecule:
+            continue
+        for a in split(molecule[3:]):
+            comp.append(pure_atoms[a][0])
+        molecules[molecule] += comp
+    a_count = {idx: len(at.positions) for idx,at in enumerate(atoms)}
+    #a_count = {a: np.sum([a in molecules[mol] for mol in molecules]) for a in np.unique([m  for mol in molecules for m in molecules[mol]])}
     print("PARSING REACTIONS")
     reactions = {}
     for idx, a in enumerate(atoms):
@@ -213,7 +229,12 @@ if __name__ == '__main__':
         print("\n ================================= \n")
         print("FREEZING SCF MODEL.XC AND APPENDING NEW LAYER")
         print("\n ================================= \n")
-        freeze_append_xc(scf)
+        freeze_append_xc(scf, args.freezeappend)
+
+    if args.gradientclip and args.gcliphook and not args.gclipnorm:
+        print("Registering Backward Hook to Clip Gradient")
+        for p in scf.xc.parameters():
+            p.register_hook(lambda grad: torch.clamp(grad, -args.gradientclip, args.gradientclip))
 
     if args.testrun:
         #TODO: fix this, dataloader doesn't have dm_ref
@@ -268,7 +289,7 @@ if __name__ == '__main__':
     h_losses = {"rho" : (partial(density_loss,loss = torch.nn.MSELoss()), args.rho_weight),
                 "E":  (partial(energy_loss, loss = torch.nn.MSELoss()), args.E_weight)}
 
-    ae_loss = partial(ae_loss,loss = torch.nn.MSELoss())
+    ae_loss = partial(ae_loss,loss = torch.nn.L1Loss())
      
     #Indices for self-consistent training molecules
     train_order = np.arange(len(molecules)).astype(int)
@@ -299,29 +320,57 @@ if __name__ == '__main__':
                 np.random.shuffle(train_order)
                 for m_idx in train_order:
                     molecule = list(molecules.keys())[m_idx]
+                    print("================================")
+                    print('--------------{}----------------'.format(m_idx))
                     print("TRAINING ON MOLECULE: ", molecule)
+                    print("SUBMOLECULES: {}".format([atoms[idx].get_chemical_formula() for idx in molecules[molecule]]))
+                    print("================================")
                     #if molecule not self-consistent, skip it
                     if not molecules_sc[molecule] and not args.nonsc_weight: continue
+                    #34HONN, HN2O frequently causes network weights to evaluate to NaN. Skip for now
+                    #if ('34HONN' or '43HFF') in molecule:
+                    #    print("SKIPPING: ", molecule)
+                    #    continue
+                    #get molecule to see if skippable
+                    m_form = atoms[molecules[molecule][0]].get_chemical_formula()
+                    if m_form in skips:
+                        print("SKIPPING: ", molecule)
+                        continue
                     mol_sc = True
                     ref_dict = {}
                     pred_dict = {}
                     loss = 0
-                    for idx, data in enumerate(dataloader_train):
+                    print("Subsetting Dataset with molecules[{}]: ".format(molecule), molecules[molecule])
+                    subset = torch.utils.data.Subset(dataset, molecules[molecule])
+                    subset_loader = torch.utils.data.DataLoader(subset, batch_size=1, shuffle=False)
+                    #for idx, data in enumerate(dataloader_train):
+                    for didx, data in enumerate(subset_loader):
+                        idx = molecules[molecule][didx]
                         if idx == 0:
                             print(idx, data[1].keys())
                         #If the index in the data is not the index of the molecule chosen by m_idx, continue
-                        if not idx in molecules[molecule]: continue
+                        #if idx not in molecules[molecule]:
+                        #    print("Sub-index {} not in ".format(idx), molecules[molecule])
+                        #    continue
+                        print("Calculating sub-atoms in molecule -- ", atoms[idx])
                         if args.print_names: print(atoms[idx])
-                        #dm_init, matrices, e_ref, dm_ref = data
-                        dm_init = data[0]
-                        e_ref = data[1]['e_base']
-                        dm_ref = data[1]['dm']
-                        matrices = data[1]
+                        if atoms[idx].info.get('oldprep', False):
+                            print("Old prep_data.py flagged")
+                            #dm_init, matrices, e_ref, dm_ref = data
+                            dm_init, matrices = data
+                            e_ref = matrices['Etot']
+                            dm_ref = matrices['dm']
+                        else:
+                            dm_init = data[0]
+                            e_ref = data[1]['e_base']
+                            dm_ref = data[1]['dm']
+                            matrices = data[1]
                         dm_init = dm_init.to(DEVICE)
                         e_ref = e_ref.to(DEVICE)
                         dm_ref = dm_ref.to(DEVICE)
                         matrices = {key:matrices[key].to(DEVICE) for key in matrices}
                         dm_mix = matrices['dm_realinit']
+                        
                         if args.start_converged:
                             mixing = torch.rand(1)*0
                         else:
@@ -344,6 +393,8 @@ if __name__ == '__main__':
                         results = scf_wrap(scf, dm_in, matrices, sc, molecule=molecule)
                         if results == None:
                             break
+                        print("E_REF: {}".format(e_ref))
+                        print("E_PRED: {}".format(results['E']))
                         #Add matrix keys to results dict
                         results['dm_ref'] = dm_ref
                         results['fcenter'] = matrices.get('fcenter',None)
@@ -381,7 +432,7 @@ if __name__ == '__main__':
                             losses = h_losses
                         #For each key in whichever loss dict chosen,
                         #Select the function (it's a tuple of itself), feed in results dict, normalize by number of atoms
-                        losses_eval = {key: losses[key][0](results)/a_count[idx] for key in losses}
+                        losses_eval = {key: losses[key][0](results)/a_count[idx]+1e-6 for key in losses}
                         print("LOSSES_EVAL: ", losses_eval)
                         #Update running losses with new losses
                         #TODO: why is .item() needed????
@@ -390,23 +441,26 @@ if __name__ == '__main__':
                         #IF Reaction type is 2, it is an A+B -> AB reaction.
                         #Store the dataset e_ref as ref, and results E as prediction
                         if reaction == 2:
-                            ref_dict['AB'] = e_ref
+                            print("REACTION TYPE: 2. A+B -> AB")
+                            ref_dict['AB'] = e_ref+1e-6
                             pred_dict['AB'] = results['E'][-1:]
                         #ELSE if Reaction type is 1, it is an A->A reaction with some charge difference,
                         #Typically, reactant is charged so reaction == 1 is neutral
                         #TODO: Why multiply by 2 here?
                         elif reaction == 1:
-                            ref_dict['AA'] = e_ref*2
+                            print("REACTION TYPE: 1. A -> A")
+                            ref_dict['AA'] = e_ref*2+1e-6
                             pred_dict['AA'] = results['E'][skip_steps:]*2
                         #ELSE IF it is a reactant in either of the above pathways,
                         elif reaction == 'reactant':
+                            print("REACTION TYPE: REACTANT.")
                             #If self-consistent,
                             if sc:
-                                ref_dict['A'] = e_ref
+                                ref_dict['A'] = e_ref+1e-6
                                 pred_dict['A'] = results['E'][skip_steps:]
                             else:
                                 label = 'A' if not 'A' in ref_dict else 'B'
-                                ref_dict[label] = e_ref
+                                ref_dict[label] = e_ref+1e-6
                                 pred_dict[label] = results['E'][-1:]
                         #If not reaction 2, 1, reactant, and molecule has more than one atom, e_ref is reference energy
                         elif len(atoms[idx].positions) > 1:
@@ -422,12 +476,16 @@ if __name__ == '__main__':
                             ref_dict[''.join(atoms[idx].get_chemical_symbols())] = e_ref
                             pred_dict[''.join(atoms[idx].get_chemical_symbols())] = results['E'][-1:]
                         loss += sum([losses_eval[key]*losses[key][1] for key in losses])
+                        print(loss)
                     if not results:
                         continue
-                    print("LOOP OVER TRAJECTORY COMPLETED")
+                    print("LOOP OVER SUBMOLECULES COMPLETED")
                     print("REF_DICT: ", ref_dict)
                     print("PRED_DICT: ", pred_dict)
                     ael = ae_loss(ref_dict,pred_dict)
+                    if args.normael:
+                        print("Normalizing AEL")
+                        ael = torch.log(ael)
                     running_losses['ae'] += ael.item()
                     print('predict dict', pred_dict)
                     print('ref dict', ref_dict)
@@ -439,8 +497,17 @@ if __name__ == '__main__':
                         loss += args.nonsc_weight * ael
                         running_losses['ae'] += args.nonsc_weight * ael.item()
                     total_loss += loss.item()
+                    print("Zeroing Optimizer Grad")
                     optimizer.zero_grad()
+                    print("Backward Propagation")
                     loss.backward()
+                    if args.checkgrad:
+                        for p in scf.xc.parameters():
+                            print('===========\ngradient\n----------\nmax: {}\nmin: {}'.format(torch.max(p.grad), torch.min(p.grad)))
+                    if args.gradientclip and args.gclipnorm and not args.gcliphook:
+                        print("Clipping Norm With Clip Gradient")
+                        torch.nn.utils.clip_grad_norm_(scf.xc.parameters(), args.gradientclip)
+                    print("Step Optimizer")
                     optimizer.step()
             except RuntimeError:
                 encountered_nan = True
@@ -468,6 +535,7 @@ if __name__ == '__main__':
             torch.save(scf, logpath + '_current.pt')
             if total_loss == best_loss:
                 torch.save(scf.xc.state_dict(), logpath + '_{}.chkpt'.format(chkpt_idx%3))
+                torch.save(scf, logpath + '_{}.pt'.format(chkpt_idx%3))
                 torch.save(optimizer.state_dict(), logpath + '_{}.adam.chkpt'.format(chkpt_idx%3))
                 chkpt_str = '_{}.chkpt'.format(chkpt_idx%3)
                 chkpt_idx += 1

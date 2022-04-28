@@ -61,36 +61,6 @@ def econv_loss(results, loss, **kwargs):
     ldE = loss(dE, torch.zeros_like(dE))
     return ldE
 
-def ae_loss(ref_dict,pred_dict, loss, **kwargs):
-    """ae_loss(ref_dict, pred_dict, loss, **kwargs):
-    
-        Calulates atomization energy loss from reference values.
-
-    Args:
-        ref_dict ([dict]): A dictionary of reference atomization energies, whose values are flattened to a list.
-        pred_dict ([dict]): A dictionary of predicted atomization energies, whose values are flattened to a list.
-        loss (callable): Callable loss function
-        weights (torch.Tensor) [optional]: if specified, scale individual energy differences.
-            defaults to a linspace of weights from 0 to 1 of size results['E'], or 1 if only one prediction.
-
-    Returns:
-        [?]: loss called on weighted difference between reference and prediction
-    """
-    print("AE_LOSS FUNCTION")
-    print("Flattening ref_dict, pred_dict")
-    ref = torch.cat(list(atomization_energies(ref_dict).values()))
-    pred = torch.cat(list(atomization_energies(pred_dict).values()))
-    print("FLAT: ref, pred: ", ref, pred)
-    assert len(ref) == 1
-    ref = ref.expand(pred.size()[0])
-    if pred.size()[0] > 1:
-        weights = kwargs.get('weights', torch.linspace(0,1,pred.size()[0])**2).to(pred.device)
-    else:
-        weights = 1
-    lae = loss((ref-pred)*weights,torch.zeros_like(pred))
-    return lae
-
-
 def dm_loss(results, loss, **kwargs):
     """[summary]
 
@@ -220,6 +190,43 @@ def gap_loss(results, loss, nhomo, **kwargs):
     lgap = loss(dgap, torch.zeros_like(dgap))
     return lgap
 
+
+def ae_loss(ref_dict,pred_dict, loss, **kwargs):
+    """ae_loss(ref_dict, pred_dict, loss, **kwargs):
+    
+        Calulates atomization energy loss from reference values.
+
+    Args:
+        ref_dict ([dict]): A dictionary of reference atomization energies, whose values are flattened to a list.
+        pred_dict ([dict]): A dictionary of predicted atomization energies, whose values are flattened to a list.
+        loss (callable): Callable loss function
+        weights (torch.Tensor) [optional]: if specified, scale individual energy differences.
+            defaults to a linspace of weights from 0 to 1 of size results['E'], or 1 if only one prediction.
+
+    Returns:
+        [?]: loss called on weighted difference between reference and prediction
+    """
+    print("AE_LOSS FUNCTION")
+    print("INPUT REF/PRED: ")
+    print("REF: {}".format(ref_dict))
+    print("PRED: {}".format(pred_dict))
+    print("Flattening ref_dict, pred_dict")
+    ref = torch.cat(list(atomization_energies(ref_dict).values()))
+    pred = torch.cat(list(atomization_energies(pred_dict).values()))
+    print("FLAT: ref, pred: ", ref, pred)
+    #TODO: fix this, temporary
+    ref = ref[-1] if len(ref) > 1 else ref
+    assert len(ref) == 1
+    ref = ref.expand(pred.size()[0])
+    if pred.size()[0] > 1:
+        weights = kwargs.get('weights', torch.linspace(0,1,pred.size()[0])**2).to(pred.device)
+    else:
+        weights = 1
+    lae = loss((ref-pred)*weights,torch.zeros_like(pred))
+    print("AE LOSS: {}".format(lae))
+    return lae
+
+
 def atomization_energies(energies):
     """[summary]
 
@@ -250,5 +257,11 @@ def atomization_energies(energies):
         for symbol in split(key):
             if len(split(key)) == 1: continue
             e_tot -= energies[symbol]
+            print('{} - {}: {}'.format(key, symbol, e_tot))
+            ae[key] = e_tot
+    if ae == {}:
+        #empty dict -- no splitting occurred, so single atom
         ae[key] = e_tot
+    print("Atomization Energy Final")
+    print(ae)
     return ae

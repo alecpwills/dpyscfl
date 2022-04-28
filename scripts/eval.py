@@ -2,7 +2,7 @@
 # coding: utf-8
 import torch
 torch.set_default_dtype(torch.float)
-import pyscf
+import pylibnxc
 import numpy as np
 from ase.io import read
 from dpyscfl.net import *
@@ -10,9 +10,8 @@ from dpyscfl.scf import *
 from dpyscfl.utils import *
 from dpyscfl.losses import *
 from ase.units import Bohr, Hartree
-import os, sys, argparse, psutil, pickle
+import os, sys, argparse, psutil, pickle, threading, signal
 from opt_einsum import contract
-
 
 process = psutil.Process(os.getpid())
 DEVICE = 'cpu'
@@ -25,7 +24,7 @@ parser.add_argument('--basis', metavar='basis', type=str, nargs = '?', default='
 parser.add_argument('--datapath', action='store', type=str, help='Location of precomputed matrices (run prep_data first)')
 parser.add_argument('--refpath', action='store', type=str, help='Location of reference trajectories/DMs')
 parser.add_argument('--reftraj', action='store', type=str, default="results.traj", help='File of reference trajectories')
-parser.add_argument('--modelpath', metavar='modelpath', type=str, default='', help='Net Checkpoint location to continue training')
+parser.add_argument('--modelpath', metavar='modelpath', type=str, default='', help='Net Checkpoint location to use evaluating. Must be a directory containing "xc" network or "scf" network. Directory path must contain LDA, GGA, or MGGA.')
 parser.add_argument('--writepath', action='store', default='.', help='where to write eval results')
 parser.add_argument('--writeeach', action='store', default='', help='where to write results individually')
 parser.add_argument('--writeref', action='store_true', default=False, help='write reference dictionaries')
@@ -35,7 +34,98 @@ parser.add_argument('--startidx', action='store', default=0, type=int, help='Ind
 parser.add_argument('--endidx', action='store', default=-1, type=int, help='Index in reference traj to end on.')
 parser.add_argument('--skipidcs', nargs='*', type=int, help="Indices to skip during evaluation. Space separated list of ints")
 parser.add_argument('--skipforms', nargs='*', type=str, help='Formulas to skip during evaluation')
+parser.add_argument('--memwatch', action='store_true', default=False, help='UNIMPLEMENTED YET')
+parser.add_argument('--nowrapscf', action='store_true', default=False, help="Whether to wrap SCF calc in exception catcher")
 args = parser.parse_args()
+
+def KS(mol, method, model_path='', nxc_kind='grid', **kwargs):
+    """ Wrapper for the pyscf RKS and UKS class
+    that uses a libnxc functionals
+    """
+    #hyb = kwargs.get('hyb', 0)
+    mf = method(mol, **kwargs)
+    if model_path != '':
+        if nxc_kind.lower() == 'atomic':
+            model = get_nxc_adapter('pyscf', model_path)
+            mf.get_veff = veff_mod_atomic(mf, model)
+        elif nxc_kind.lower() == 'grid':
+            parsed_xc = pylibnxc.pyscf.utils.parse_xc_code(model_path)
+            dft.libxc.define_xc_(mf._numint,
+                                 eval_xc,
+                                 pylibnxc.pyscf.utils.find_max_level(parsed_xc),
+                                 hyb=parsed_xc[0][0])
+            mf.xc = model_path
+        else:
+            raise ValueError(
+                "{} not a valid nxc_kind. Valid options are 'atomic' or 'grid'"
+                .format(nxc_kind))
+    return mf
+
+
+def eval_xc(xc_code, rho, spin=0, relativity=0, deriv=1, verbose=None):
+    """ Evaluation for grid-based models (not atomic)
+        See pyscf documentation of eval_xc
+    """
+    inp = {}
+    if spin == 0:
+        if rho.ndim == 1:
+            rho = rho.reshape(1, -1)
+        inp['rho'] = rho[0]
+        if len(rho) > 1:
+            dx, dy, dz = rho[1:4]
+            gamma = (dx**2 + dy**2 + dz**2)
+            inp['sigma'] = gamma
+        if len(rho) > 4:
+            inp['lapl'] = rho[4]
+            inp['tau'] = rho[5]
+    else:
+        rho_a, rho_b = rho
+        if rho_a.ndim == 1:
+            rho_a = rho_a.reshape(1, -1)
+            rho_b = rho_b.reshape(1, -1)
+        inp['rho'] = np.stack([rho_a[0], rho_b[0]])
+        if len(rho_a) > 1:
+            dxa, dya, dza = rho_a[1:4]
+            dxb, dyb, dzb = rho_b[1:4]
+            gamma_a = (dxa**2 + dya**2 + dza**2)  #compute contracted gradients
+            gamma_b = (dxb**2 + dyb**2 + dzb**2)
+            gamma_ab = (dxb * dxa + dyb * dya + dzb * dza)
+            inp['sigma'] = np.stack([gamma_a, gamma_ab, gamma_b])
+        if len(rho_a) > 4:
+            inp['lapl'] = np.stack([rho_a[4], rho_b[4]])
+            inp['tau'] = np.stack([rho_a[5], rho_b[5]])
+
+    parsed_xc = pylibnxc.pyscf.utils.parse_xc_code(xc_code)
+    total_output = {'v' + key: 0.0 for key in inp}
+    total_output['zk'] = 0
+    #print(parsed_xc)
+    for code, factor in parsed_xc[1]:
+        model = pylibnxc.LibNXCFunctional(xc_code, kind='grid')
+        output = model.compute(inp)
+        for key in output:
+            if output[key] is not None:
+                total_output[key] += output[key] * factor
+
+    exc, vlapl, vtau, vrho, vsigma = [total_output.get(key,None)\
+      for key in ['zk','vlapl','vtau','vrho','vsigma']]
+
+    vxc = (vrho, vsigma, vlapl, vtau)
+    fxc = None  # 2nd order functional derivative
+    kxc = None  # 3rd order functional derivative
+    return exc, vxc, fxc, kxc
+
+
+def memory_watch(pid, idx, formula, fails, memoryMaxFrac=0.65):
+    memoryMax = memoryMaxFrac*psutil.virtual_memory().total #total memory in bytes
+    while True:
+        process = psutil.Process(pid)
+        processMemory = process.memory_info().rss #in bytes
+        if processMemory > memoryMax:
+            print("MEMORY MAX EXCEEDED. CONTINUING")
+            fails.append((idx, formula, "MEMMAX"))
+            break
+    os.kill(pid, signal.SIGINT)
+
 
 def scf_wrap(scf, dm_in, matrices, sc, molecule=''):
     try:
@@ -86,14 +176,6 @@ if __name__ == '__main__':
     atoms = read(atomsp, ':')
     e_refs = [a.calc.results['energy']/Hartree for a in atoms]
     indices = np.arange(len(atoms)).tolist()
-    print("GENERATING SCF OBJECT")
-    if args.pretrain_loc:
-        scf = get_scf(args.type, pretrain_loc=args.pretrain_loc)
-    elif args.modelpath:
-        scf = get_scf(args.type, path=args.modelpath)
-    else:
-        scf = get_scf(args.type)
-    scf.xc.evaluate()
 
     ref_dct = {'E':[], 'dm':[], 'mo_e':[]}
     pred_dct = {'E':[], 'dm':[], 'mo_e':[]}
@@ -104,42 +186,37 @@ if __name__ == '__main__':
     grid_level = 1 if args.xc else 0
     endidx = len(atoms) if args.endidx == -1 else args.endidx
     for idx, atom in enumerate(atoms):
+        results = {}
         #manually skip for preservation of reference file lookups
         if idx < args.startidx:
             continue
         if idx > endidx:
             continue
+
         formula = atom.get_chemical_formula()
         symbols = atom.symbols
-        dmp = os.path.join(args.refpath, '{}_{}.dm.npy'.format(idx, symbols))
-        dm_ref = np.load(dmp)
-        e_ref = e_refs[idx]
         print("================= {}:    {} ======================".format(idx, formula))
         print("Getting Datapoint")
         if (formula in skipforms) or (idx in skipidcs):
             print("SKIPPING")
             fails.append((idx, formula))
             continue
-        atom_E, _, atom_mats = old_get_datapoint(atoms=atom, xc=args.xc, grid_level=grid_level,
-                                                basis=args.basis)
-        if not args.keeprho:
-            print('Purging rho')
-            atom_mats.pop('rho', None)
-        atom_mats = {k:[v] for k,v in atom_mats.items()}
+        name, mol = ase_atoms_to_mol(atom)
+        _, method = gen_mf_mol(mol, xc='notnull', grid_level=3, nxc=True)
+        mf = KS(mol, method, model_path=args.modelpath)
+        mf.grids.level = 3
+        mf.density_fit()
+        mf.kernel()
+        e_pred = mf.e_tot
+        dm_pred = mf.make_rdm1()
 
-        dset = Dataset(**atom_mats)
-        dloader = torch.utils.data.DataLoader(dset, batch_size=1)
+        dmp = os.path.join(args.refpath, '{}_{}.dm.npy'.format(idx, symbols))
+        dm_ref = np.load(dmp)
+        e_ref = e_refs[idx]
 
-        #matrices.pop('dm_init') and matrices
-        inputs = next(iter(dloader))
-        print("CALCULATING PREDICTION")
-        mixing = torch.rand(1)/2 + 0.5
-        dm_mix = inputs[1]['dm_realinit']
-        dm_in = inputs[0]*(1-mixing) + dm_mix*mixing
-        results = scf_wrap(scf, dm_in, inputs[1], sc=True, molecule=atom.get_chemical_formula())
-        if not results:
-            fails.append((idx, formula))
-            continue
+        results['E'] = e_pred
+        results['dm'] = dm_pred
+        
 
         if args.writeeach:
             wep = os.path.join(args.writepath, args.writeeach)
@@ -150,10 +227,9 @@ if __name__ == '__main__':
 
         ref_dct['E'].append(e_ref)
         ref_dct['dm'].append(dm_ref)
-        ref_dct['mo_e'].append(atom_mats['mo_energy'][0])
-        pred_dct['E'].append(results['E'][-1])
+
+        pred_dct['E'].append(results['E'])
         pred_dct['dm'].append(results['dm'])
-        pred_dct['mo_e'].append(results['mo_energy'])
 
         for key in loss_dct.keys():
             print(key)
@@ -166,9 +242,9 @@ if __name__ == '__main__':
         print(loss_dct)
         print("+++++++++++++++++++++++++++++++")
     
-    with open(args.writepath+'/loss_dct.pckl', 'wb') as file:
+    with open(args.writepath+'/loss_dct_{}.pckl'.format(args.type), 'wb') as file:
         file.write(pickle.dumps(loss_dct))
-    with open(args.writepath+'/loss_dct.txt', 'w') as file:
+    with open(args.writepath+'/loss_dct_{}.txt'.format(args.type), 'w') as file:
         for k,v in loss_dct.items():
             file.write("{} {}\n".format(k,v))
     if fails:
@@ -179,5 +255,5 @@ if __name__ == '__main__':
         with open(args.writepath+'/ref_dct.pckl', 'wb') as file:
             file.write(pickle.dumps(ref_dct))
     if args.writepred and not args.writeeach:
-        with open(args.writepath+'/pred_dct.pckl', 'wb') as file:
+        with open(args.writepath+'/pred_dct_{}.pckl'.format(args.xctype), 'wb') as file:
             file.write(pickle.dumps(pred_dct))

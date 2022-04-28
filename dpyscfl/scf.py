@@ -112,7 +112,10 @@ class eig(torch.nn.Module):
         Returns:
             (torch.Tensor, torch.Tensor): Eigenvalues (MO energies), eigenvectors (MO coeffs)
         """
-        e, c = torch.symeig(contract('ij,...jk,kl->...il',s_chol, h, s_chol.T), eigenvectors=True,upper=False)
+        #e, c = torch.symeig(contract('ij,...jk,kl->...il',s_chol, h, s_chol.T), eigenvectors=True,upper=False)
+        upper=False
+        UPLO = "U" if upper else "L"
+        e, c = torch.linalg.eigh(contract('ij,...jk,kl->...il',s_chol, h, s_chol.T), UPLO=UPLO)
         c = contract('ij,...jk ->...ik',s_chol.T, c)
         return e, c
 
@@ -251,68 +254,75 @@ class SCF(torch.nn.Module):
 
 
         # SCF iteration loop
-        for step in range(nsteps):
-            alpha = (self.alpha)**(step)+0.3
-            beta = (1-alpha)
-            dm = alpha * dm + beta * dm_old
+        def scf_loop(dm, dm_old):
+            for step in range(nsteps):
+                alpha = (self.alpha)**(step)+0.3
+                beta = (1-alpha)
+                dm = alpha * dm + beta * dm_old
 
-            dm_old = dm
+                dm_old = dm
 
-            hc = get_hcore(v,t)
-            if df_3c is not None:
-                veff = self.get_veff.forward_df(dm, df_3c, df_2c_inv, eri)
-            else:
-                veff = self.get_veff(dm, eri)
-
-            if self.xc: #If using xc-functional (not Hartree-Fock)
-                self.xc.ao_eval = ao_eval
-                self.xc.grid_weights = grid_weights
-                self.xc.grid_coords = grid_coords
-                if vh_on_grid is not None:
-                    self.xc.vh_on_grid = vh_on_grid
-                    self.xc.df_2c_inv = df_2c_inv
-                    self.xc.df_3c = df_3c
-
-                if torch.sum(mo_occ) == 1:   # Otherwise H produces NaNs
-                    dm[1] = dm[0]*1e-12
-                    dm_old[1] = dm[0]*1e-12
-
-                exc = self.xc(dm)
-
-                vxc = torch.autograd.functional.jacobian(self.xc, dm, create_graph=create_graph)
-                # Restore correct symmetry for vxc
-                if vxc.dim() > 2:
-                    vxc = contract('ij,xjk,kl->xil',L,vxc,L.T)
-                    vxc = torch.where(scaling.unsqueeze(0) > 0 , vxc, scaling.unsqueeze(0))
+                hc = get_hcore(v,t)
+                if df_3c is not None:
+                    veff = self.get_veff.forward_df(dm, df_3c, df_2c_inv, eri)
                 else:
-                    vxc = torch.mm(L,torch.mm(vxc,L.T))
-                    vxc = torch.where(scaling > 0 , vxc, scaling)
+                    veff = self.get_veff(dm, eri)
+                if self.xc: #If using xc-functional (not Hartree-Fock)
+                    self.xc.ao_eval = ao_eval
+                    self.xc.grid_weights = grid_weights
+                    self.xc.grid_coords = grid_coords
+                    if vh_on_grid is not None:
+                        self.xc.vh_on_grid = vh_on_grid
+                        self.xc.df_2c_inv = df_2c_inv
+                        self.xc.df_3c = df_3c
 
-                if torch.sum(mo_occ) == 1:   # Otherwise H produces NaNs
-                    vxc[1] = torch.zeros_like(vxc[1])
+                    if torch.sum(mo_occ) == 1:   # Otherwise H produces NaNs
+                        dm[1] = dm[0]*1e-12
+                        dm_old[1] = dm[0]*1e-12
 
-                veff += vxc
+                    exc = self.xc(dm)
+                    vxc = torch.autograd.functional.jacobian(self.xc, dm, create_graph=True)
+                    # Restore correct symmetry for vxc
+                    if vxc.dim() > 2:
+                        vxc = contract('ij,xjk,kl->xil',L,vxc,L.T)
+                        vxc = torch.where(scaling.unsqueeze(0) > 0 , vxc, scaling.unsqueeze(0))
+                    else:
+                        vxc = torch.mm(L,torch.mm(vxc,L.T))
+                        vxc = torch.where(scaling > 0 , vxc, scaling)
 
-                #Add random noise to potential to avoid degeneracies in EVs
-                if self.xc.training and sc:
-                    print("Noise generation to avoid potential degeneracies")
-                    noise = torch.abs(torch.randn(vxc.size(),device=vxc.device)*1e-8)
-                    noise = noise + torch.transpose(noise,-1,-2)
-                    veff = veff + noise
+                    if torch.sum(mo_occ) == 1:   # Otherwise H produces NaNs
+                        vxc[1] = torch.zeros_like(vxc[1])
 
-            else:
-                exc=0
-                vxc=torch.zeros_like(veff)
+                    veff += vxc
 
+                    #Add random noise to potential to avoid degeneracies in EVs
+                    if self.xc.training:#: and sc:
+                        if step == 0:
+                            print("Noise generation to avoid potential degeneracies")
+                        noise = torch.abs(torch.randn(vxc.size(),device=vxc.device)*1e-6)
+                        noise = noise + torch.transpose(noise,-1,-2)
+                        veff = veff + noise
 
-            f = get_fock(hc, veff)
-            mo_e, mo_coeff = self.eig(f, s_chol)
-            dm = self.make_rdm1(mo_coeff, mo_occ)
+                else:
+                    exc=0
+                    vxc=torch.zeros_like(veff)
+                f = get_fock(hc, veff)
+                mo_e, mo_coeff = self.eig(f, s_chol)
+                dm = self.make_rdm1(mo_coeff, mo_occ)
 
-            e_tot = self.energy_tot(dm_old, hc, veff-vxc)+ e_nuc + exc
-            E.append(e_tot)
-            if not sc:
-                break
+                e_tot = self.energy_tot(dm_old, hc, veff-vxc)+ e_nuc + exc
+                E.append(e_tot)
+                if not sc:
+                    break
+            return (E, dm, mo_e)
+
+        if not self.xc.training:
+            #no training, no backprop, no grads
+            with torch.no_grad():
+                E, dm, mo_e = scf_loop(dm, dm_old)
+        else:
+            E, dm, mo_e = scf_loop(dm, dm_old)
+
 
         results = {'E': torch.cat(E), 'dm':dm, 'mo_energy':mo_e}
 

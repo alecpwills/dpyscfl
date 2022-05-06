@@ -299,7 +299,7 @@ class SCF(torch.nn.Module):
                     if self.xc.training:#: and sc:
                         if step == 0:
                             print("Noise generation to avoid potential degeneracies")
-                        noise = torch.abs(torch.randn(vxc.size(),device=vxc.device)*1e-6)
+                        noise = torch.abs(torch.randn(vxc.size(),device=vxc.device)*1e-8)
                         noise = noise + torch.transpose(noise,-1,-2)
                         veff = veff + noise
 

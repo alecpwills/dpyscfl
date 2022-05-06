@@ -25,8 +25,8 @@ parser.add_argument('--datapath', action='store', type=str, help='Location of pr
 parser.add_argument('--reftraj', action='store', type=str, help='Location of reference trajectories')
 parser.add_argument('--n_hidden', metavar='n_hidden', type=int, default=16, help='Number of hidden nodes (16)')
 parser.add_argument('--hyb_par', metavar='hyb_par', type=float, default=0.0, help='Hybrid mixing parameter (0.0)')
-parser.add_argument('--E_weight', metavar='e_weight', type=float, default=0.0, help='Weight of total energy term in loss function (0)')
-parser.add_argument('--rho_weight', metavar='rho_weight', type=float, default=25, help='Weight of density term in loss function (25)')
+parser.add_argument('--E_weight', metavar='e_weight', type=float, default=0.01, help='Weight of total energy term in loss function (0)')
+parser.add_argument('--rho_weight', metavar='rho_weight', type=float, default=20, help='Weight of density term in loss function (25)')
 parser.add_argument('--modelpath', metavar='modelpath', type=str, default='', help='Net Checkpoint location to continue training')
 parser.add_argument('--optimpath', metavar='optimpath', type=str, default='', help='Optimizer Checkpoint location to continue training')
 parser.add_argument('--logpath', metavar='logpath', type=str, default='log/', help='Logging directory (log/)')
@@ -36,7 +36,7 @@ parser.add_argument('--l2', metavar='l2', type=float, default=1e-8, help='Weight
 parser.add_argument('--hnorm', action='store_true', help='Use H energy and density in loss')
 parser.add_argument('--print_stdout', action='store_true', help='Print to stdout instead of logfile')
 parser.add_argument('--print_names', action='store_true', help='Print molecule names during training')
-parser.add_argument('--nonsc_weight', metavar='nonsc_weight',type=float, default=.5, help='Loss multiplier for non-selfconsistent datapoints')
+parser.add_argument('--nonsc_weight', metavar='nonsc_weight',type=float, default=0.01, help='Loss multiplier for non-selfconsistent datapoints')
 parser.add_argument('--start_converged', action='store_true', help='Start from converged density matrix')
 parser.add_argument('--scf_steps', metavar='scf_steps', type=int, default=25, help='Number of scf steps')
 parser.add_argument('--polynomial', action='store_true', help='Use polynomials instead of neural networks')
@@ -47,6 +47,7 @@ parser.add_argument('--rho_alt', action='store_true', help='Alternative rho loss
 parser.add_argument('--radical_factor', metavar='radical_factor',type=float, default=1.0, help='')
 parser.add_argument('--forcedensloss', action='store_true', default=False, help='Make training use density loss.')
 parser.add_argument('--freezeappend',  type=int, action='store', default=0, help='If flagged, freezes network and adds N duplicate layers between output layer and last hidden layer. The new layer is not frozen.')
+parser.add_argument('--outputlayergrad', type=bool, action='store_true', default=False, help='Only works with freezeappend. If flagged, sets the output layer to also be differentiable.')
 parser.add_argument('--gradientclip', action='store', type=float, default=0, help='If set, clips gradient so no explosions in backpropagation')
 parser.add_argument('--gclipnorm', action='store_true', default=False, help='Flag only works with gradientclip. If flagged and gcliphook not, clips norm after completion of backpropagation')
 parser.add_argument('--gcliphook', action='store_true', default=False, help='Flag only works with gradientclip. If flagged and gclipnorm not, clips norm during backpropagation')
@@ -64,7 +65,7 @@ def freeze_net(nn):
 def unfreeze_net(nn):
     for i in nn.parameters():
         i.requires_grad = True
-def freeze_append_xc(model, n):
+def freeze_append_xc(model, n, outputlayergrad = args.outputlayergrad):
     freeze_net(model.xc)
     #Implemented as a Module List of the X and C networks.
     chil = [i for i in model.xc.children() if isinstance(i, torch.nn.ModuleList)][0]
@@ -88,6 +89,12 @@ def freeze_append_xc(model, n):
     #Readd output layer.
     xl.append(xout)
     cl.append(cout)
+    #If flagged, set output layer to be non-frozen
+    if outputlayergrad:
+        for par in xl[-1].parameters():
+            par.requires_grad = True
+        for par in cl[-1].parameters():
+            par.requires_grad = True
     #Set the new layers as the networks to use.
     chil[0].net = torch.nn.Sequential(*xl)
     chil[1].net = torch.nn.Sequential(*cl)
@@ -224,6 +231,7 @@ if __name__ == '__main__':
         scf = get_scf(args.type, path=args.modelpath)
     else:
         scf = get_scf(args.type)
+    scf.nsteps = args.scf_steps
 
     if args.freezeappend:
         print("\n ================================= \n")
@@ -284,12 +292,15 @@ if __name__ == '__main__':
     #Loss Functions -- Density
     density_loss = rho_alt_loss if args.rho_alt else rho_loss
     ##TODO: no reason to make these tuples
+    # args.rho_weight defaults to 20, per the paper
+    # args.E_weight defaults to 0.01, per the paper
+    # AE Loss has weight 1 by default, per the paper, but decreases for non-sc
     mol_losses = {"rho" : (partial(density_loss, loss = torch.nn.MSELoss()), args.rho_weight)}
     atm_losses = {"E":  (partial(energy_loss, loss = torch.nn.MSELoss()), args.E_weight)}
     h_losses = {"rho" : (partial(density_loss,loss = torch.nn.MSELoss()), args.rho_weight),
                 "E":  (partial(energy_loss, loss = torch.nn.MSELoss()), args.E_weight)}
 
-    ae_loss = partial(ae_loss,loss = torch.nn.L1Loss())
+    ae_loss = partial(ae_loss,loss = torch.nn.MSELoss())
      
     #Indices for self-consistent training molecules
     train_order = np.arange(len(molecules)).astype(int)
@@ -362,7 +373,11 @@ if __name__ == '__main__':
                             dm_ref = matrices['dm']
                         else:
                             dm_init = data[0]
-                            e_ref = data[1]['e_base']
+                            try:
+                                e_ref = data[1]['e_base']
+                            except KeyError:
+                                print("Wrong key, trying Etot from matrices")
+                                e_ref = data[1]['Etot']
                             dm_ref = data[1]['dm']
                             matrices = data[1]
                         dm_init = dm_init.to(DEVICE)
@@ -432,7 +447,7 @@ if __name__ == '__main__':
                             losses = h_losses
                         #For each key in whichever loss dict chosen,
                         #Select the function (it's a tuple of itself), feed in results dict, normalize by number of atoms
-                        losses_eval = {key: losses[key][0](results)/a_count[idx]+1e-6 for key in losses}
+                        losses_eval = {key: losses[key][0](results)/a_count[idx] for key in losses}
                         print("LOSSES_EVAL: ", losses_eval)
                         #Update running losses with new losses
                         #TODO: why is .item() needed????
@@ -442,25 +457,25 @@ if __name__ == '__main__':
                         #Store the dataset e_ref as ref, and results E as prediction
                         if reaction == 2:
                             print("REACTION TYPE: 2. A+B -> AB")
-                            ref_dict['AB'] = e_ref+1e-6
+                            ref_dict['AB'] = e_ref
                             pred_dict['AB'] = results['E'][-1:]
                         #ELSE if Reaction type is 1, it is an A->A reaction with some charge difference,
                         #Typically, reactant is charged so reaction == 1 is neutral
                         #TODO: Why multiply by 2 here?
                         elif reaction == 1:
                             print("REACTION TYPE: 1. A -> A")
-                            ref_dict['AA'] = e_ref*2+1e-6
+                            ref_dict['AA'] = e_ref*2
                             pred_dict['AA'] = results['E'][skip_steps:]*2
                         #ELSE IF it is a reactant in either of the above pathways,
                         elif reaction == 'reactant':
                             print("REACTION TYPE: REACTANT.")
                             #If self-consistent,
                             if sc:
-                                ref_dict['A'] = e_ref+1e-6
+                                ref_dict['A'] = e_ref
                                 pred_dict['A'] = results['E'][skip_steps:]
                             else:
                                 label = 'A' if not 'A' in ref_dict else 'B'
-                                ref_dict[label] = e_ref+1e-6
+                                ref_dict[label] = e_ref
                                 pred_dict[label] = results['E'][-1:]
                         #If not reaction 2, 1, reactant, and molecule has more than one atom, e_ref is reference energy
                         elif len(atoms[idx].positions) > 1:
@@ -503,7 +518,8 @@ if __name__ == '__main__':
                     loss.backward()
                     if args.checkgrad:
                         for p in scf.xc.parameters():
-                            print('===========\ngradient\n----------\nmax: {}\nmin: {}'.format(torch.max(p.grad), torch.min(p.grad)))
+                            if p.requires_grad:
+                                print('===========\ngradient\n----------\nmax: {}\nmin: {}'.format(torch.max(p.grad), torch.min(p.grad)))
                     if args.gradientclip and args.gclipnorm and not args.gcliphook:
                         print("Clipping Norm With Clip Gradient")
                         torch.nn.utils.clip_grad_norm_(scf.xc.parameters(), args.gradientclip)

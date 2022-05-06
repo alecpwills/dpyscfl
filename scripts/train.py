@@ -47,7 +47,7 @@ parser.add_argument('--rho_alt', action='store_true', help='Alternative rho loss
 parser.add_argument('--radical_factor', metavar='radical_factor',type=float, default=1.0, help='')
 parser.add_argument('--forcedensloss', action='store_true', default=False, help='Make training use density loss.')
 parser.add_argument('--freezeappend',  type=int, action='store', default=0, help='If flagged, freezes network and adds N duplicate layers between output layer and last hidden layer. The new layer is not frozen.')
-parser.add_argument('--outputlayergrad', type=bool, action='store_true', default=False, help='Only works with freezeappend. If flagged, sets the output layer to also be differentiable.')
+parser.add_argument('--outputlayergrad', action='store_true', default=False, help='Only works with freezeappend. If flagged, sets the output layer to also be differentiable.')
 parser.add_argument('--gradientclip', action='store', type=float, default=0, help='If set, clips gradient so no explosions in backpropagation')
 parser.add_argument('--gclipnorm', action='store_true', default=False, help='Flag only works with gradientclip. If flagged and gcliphook not, clips norm after completion of backpropagation')
 parser.add_argument('--gcliphook', action='store_true', default=False, help='Flag only works with gradientclip. If flagged and gclipnorm not, clips norm during backpropagation')

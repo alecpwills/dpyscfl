@@ -165,6 +165,80 @@ def get_size(obj, seen=None):
 #SEAWULF SKIPS
 skipidcs = args.skipidcs if args.skipidcs else []
 skipforms = args.skipforms if args.skipforms else []
+
+def eval_wrap(atomspath, refdatpath, modelpath, evalinds=[]):
+    atoms = read(atomsp, ':')
+    e_refs = [a.calc.results['energy']/Hartree for a in atoms]
+    indices = np.arange(len(atoms)).tolist()
+    ref_dct = {'E':[], 'dm':[], 'mo_e':[]}
+    pred_dct = {'E':[], 'dm':[], 'mo_e':[]}
+    loss = torch.nn.MSELoss()
+    loss_dct = {"E":0}
+    fails = []
+    grid_level = 5 if args.xc else 0
+
+    if not evalinds:
+        evalinds = indices
+
+    for idx, atom in enumerate(atoms):
+        results = {}
+        #manually skip for preservation of reference file lookups
+        if idx not in evalinds:
+            continue
+
+        formula = atom.get_chemical_formula()
+        symbols = atom.symbols
+        print("================= {}:    {} ======================".format(idx, formula))
+        print("Getting Datapoint")
+        if (formula in skipforms) or (idx in skipidcs):
+            print("SKIPPING")
+            fails.append((idx, formula))
+            continue
+        name, mol = ase_atoms_to_mol(atom)
+        _, method = gen_mf_mol(mol, xc='notnull', grid_level=grid_level, nxc=True)
+        mf = KS(mol, method, model_path=model_path)
+        mf.grids.level = grid_level
+        mf.density_fit()
+        mf.kernel()
+        e_pred = mf.e_tot
+        dm_pred = mf.make_rdm1()
+
+        dmp = os.path.join(refdatpath, '{}_{}.dm.npy'.format(idx, symbols))
+        dm_ref = np.load(dmp)
+        e_ref = e_refs[idx]
+
+        results['E'] = e_pred
+        results['dm'] = dm_pred
+        
+
+        if args.writeeach:
+            wep = os.path.join(args.writepath, args.writeeach)
+            if args.writepred:
+                predep = os.path.join(wep, '{}_{}.pckl'.format(idx, symbols))
+                with open(predep, 'wb') as file:
+                    file.write(pickle.dumps(results))
+
+        ref_dct['E'].append(e_ref)
+        ref_dct['dm'].append(dm_ref)
+
+        pred_dct['E'].append(results['E'])
+        pred_dct['dm'].append(results['dm'])
+
+        for key in loss_dct.keys():
+            print(key)
+            rd = torch.Tensor(ref_dct[key])
+            pd = torch.Tensor(pred_dct[key])
+            loss_dct[key] = loss(rd, pd)
+        
+        print("+++++++++++++++++++++++++++++++")
+        print("RUNNING LOSS")
+        print(loss_dct)
+        print("+++++++++++++++++++++++++++++++")
+        
+
+
+
+
 if __name__ == '__main__':
     if args.writeeach:
         try:
@@ -179,11 +253,11 @@ if __name__ == '__main__':
 
     ref_dct = {'E':[], 'dm':[], 'mo_e':[]}
     pred_dct = {'E':[], 'dm':[], 'mo_e':[]}
-    loss = torch.nn.MSELoss(reduction='mean')
+    loss = torch.nn.MSELoss()
 #    loss_dct = {k: 0 for k,v in ref_dct.items()}
     loss_dct = {"E":0}
     fails = []
-    grid_level = 1 if args.xc else 0
+    grid_level = 5 if args.xc else 0
     endidx = len(atoms) if args.endidx == -1 else args.endidx
     for idx, atom in enumerate(atoms):
         results = {}

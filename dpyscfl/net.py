@@ -602,8 +602,52 @@ class PW_C(torch.nn.Module):
 
         return f_pw(rs, zeta)
 
+def freeze_net(nn):
+    for i in nn.parameters():
+        i.requires_grad = False
+
+def unfreeze_net(nn):
+    for i in nn.parameters():
+        i.requires_grad = True
+
+def freeze_append_xc(model, n, outputlayergrad):
+    freeze_net(model.xc)
+    #Implemented as a Module List of the X and C networks.
+    chil = [i for i in model.xc.children() if isinstance(i, torch.nn.ModuleList)][0]
+    #X network first. Find the children of X, i.e. the Linear/GELUs
+    xl = [i for i in chil[0].net.children()]
+    #C network second. Find the children of C, i.e. the Linear/GELUs
+    cl = [i for i in chil[1].net.children()]
+    #Pop the output layer of each net.
+    xout = xl.pop()
+    cout = cl.pop()
+    #duplicate last layer and GELU
+    xl += xl[-2:]*n
+    cl += cl[-2:]*n
+    #set last layer as unfrozen
+    for p in xl[-2*n:]:
+        for par in p.parameters():
+            par.requires_grad = True
+    for p in cl[-2*n:]:
+        for par in p.parameters():
+            par.requires_grad = True
+    #Readd output layer.
+    xl.append(xout)
+    cl.append(cout)
+    #If flagged, set output layer to be non-frozen
+    if outputlayergrad:
+        for par in xl[-1].parameters():
+            par.requires_grad = True
+        for par in cl[-1].parameters():
+            par.requires_grad = True
+    #Set the new layers as the networks to use.
+    chil[0].net = torch.nn.Sequential(*xl)
+    chil[1].net = torch.nn.Sequential(*cl)
+
+
 #BELOW IS FROM DPYSCF
-def get_scf(xctype, pretrain_loc='', hyb_par=0, path='', DEVICE='cpu', ueg_limit=True, meta_x=None, freec=False):
+def get_scf(xctype, pretrain_loc='', hyb_par=0, path='', DEVICE='cpu', ueg_limit=True, meta_x=None, freec=False,
+            inserts = 0):
     """_summary_
 
     Args:
@@ -661,6 +705,8 @@ def get_scf(xctype, pretrain_loc='', hyb_par=0, path='', DEVICE='cpu', ueg_limit
         #xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, meta_x=meta_x)
         xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level)
         scf = SCF(nsteps=25, xc=xc, exx=False,alpha=0.3)
+        if inserts:
+            freeze_append_xc(scf, inserts, False)
         if path:
             try:
                 xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))

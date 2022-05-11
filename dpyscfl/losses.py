@@ -252,11 +252,18 @@ def atomization_energies(energies):
         if isinstance(energies[key],torch.Tensor):
             #if len(split(key)) == 1:continue
             e_tot = torch.clone(energies[key])
+            e_tot_size = e_tot.size()
         else:
             e_tot = np.array(energies[key])
+            e_tot_size = e_tot.shape
         for symbol in split(key):
             if len(split(key)) == 1: continue
-            e_tot -= energies[symbol]
+            e_sub = energies[symbol]
+            e_sub_size = e_sub.size() if isinstance(e_sub, torch.Tensor) else e_sub.shape
+            if e_tot_size == e_sub_size:
+                e_tot -= e_sub
+            else:
+                e_tot -= e_sub[-1:]
             print('{} - {}: {}'.format(key, symbol, e_tot))
             ae[key] = e_tot
     if ae == {}:

@@ -13,6 +13,8 @@ from functools import partial
 from ase.units import Bohr
 from datetime import datetime
 import os, psutil, tarfile, argparse, json
+#Validation Imports
+from eval import KS, eval_xc
 
 process = psutil.Process(os.getpid())
 #dpyscf_dir = os.environ.get('DPYSCF_DIR','..')
@@ -23,6 +25,7 @@ parser.add_argument('--pretrain_loc', action='store', type=str, help='Location o
 parser.add_argument('--type', action='store', choices=['GGA','MGGA'])
 parser.add_argument('--datapath', action='store', type=str, help='Location of precomputed matrices (run prep_data first)')
 parser.add_argument('--reftraj', action='store', type=str, help='Location of reference trajectories')
+parser.add_argument('--valtraj', action='store', type=str, help='Location of reference data to use in validation')
 parser.add_argument('--n_hidden', metavar='n_hidden', type=int, default=16, help='Number of hidden nodes (16)')
 parser.add_argument('--hyb_par', metavar='hyb_par', type=float, default=0.0, help='Hybrid mixing parameter (0.0)')
 parser.add_argument('--E_weight', metavar='e_weight', type=float, default=0.01, help='Weight of total energy term in loss function (0)')
@@ -47,6 +50,7 @@ parser.add_argument('--rho_alt', action='store_true', help='Alternative rho loss
 parser.add_argument('--radical_factor', metavar='radical_factor',type=float, default=1.0, help='')
 parser.add_argument('--forcedensloss', action='store_true', default=False, help='Make training use density loss.')
 parser.add_argument('--freezeappend',  type=int, action='store', default=0, help='If flagged, freezes network and adds N duplicate layers between output layer and last hidden layer. The new layer is not frozen.')
+parser.add_argument('--loadfa', type=int, action='store', default=0, help='If loading model that has appended layers, specify number of inserts between previous final and output layers here.')
 parser.add_argument('--outputlayergrad', action='store_true', default=False, help='Only works with freezeappend. If flagged, sets the output layer to also be differentiable.')
 parser.add_argument('--gradientclip', action='store', type=float, default=0, help='If set, clips gradient so no explosions in backpropagation')
 parser.add_argument('--gclipnorm', action='store_true', default=False, help='Flag only works with gradientclip. If flagged and gcliphook not, clips norm after completion of backpropagation')
@@ -59,45 +63,6 @@ ueg_limit = not args.free
 HYBRID = (args.hyb_par > 0.0)
 
 
-def freeze_net(nn):
-    for i in nn.parameters():
-        i.requires_grad = False
-def unfreeze_net(nn):
-    for i in nn.parameters():
-        i.requires_grad = True
-def freeze_append_xc(model, n, outputlayergrad = args.outputlayergrad):
-    freeze_net(model.xc)
-    #Implemented as a Module List of the X and C networks.
-    chil = [i for i in model.xc.children() if isinstance(i, torch.nn.ModuleList)][0]
-    #X network first. Find the children of X, i.e. the Linear/GELUs
-    xl = [i for i in chil[0].net.children()]
-    #C network second. Find the children of C, i.e. the Linear/GELUs
-    cl = [i for i in chil[1].net.children()]
-    #Pop the output layer of each net.
-    xout = xl.pop()
-    cout = cl.pop()
-    #duplicate last layer and GELU
-    xl += xl[-2:]*n
-    cl += cl[-2:]*n
-    #set last layer as unfrozen
-    for p in xl[-2*n:]:
-        for par in p.parameters():
-            par.requires_grad = True
-    for p in cl[-2*n:]:
-        for par in p.parameters():
-            par.requires_grad = True
-    #Readd output layer.
-    xl.append(xout)
-    cl.append(cout)
-    #If flagged, set output layer to be non-frozen
-    if outputlayergrad:
-        for par in xl[-1].parameters():
-            par.requires_grad = True
-        for par in cl[-1].parameters():
-            par.requires_grad = True
-    #Set the new layers as the networks to use.
-    chil[0].net = torch.nn.Sequential(*xl)
-    chil[1].net = torch.nn.Sequential(*cl)
 def scf_wrap(scf, dm_in, matrices, sc, molecule=''):
     try:
         results = scf(dm_in, matrices, sc)
@@ -159,7 +124,13 @@ if __name__ == '__main__':
     indices = np.arange(len(atoms)).tolist()
     #Some molecules in the trajectory are not needed to reproduce xcdiff training set.
     #But don't pop them, because indexing important.
-    skips = ['O2', 'Cl2', 'HCl']
+    #skips = ['O2', 'Cl2', 'HCl']
+    skips = []
+
+    #Validation Molecules
+    valats = read(args.valtraj, ':')
+    valsys = [103, 14, 23, 5, 10, 79, 27, 105] #Validation
+
 
     pop = []
     print("popping specified atoms: {}".format(pop))
@@ -228,7 +199,7 @@ if __name__ == '__main__':
     if args.pretrain_loc:
         scf = get_scf(args.type, pretrain_loc=args.pretrain_loc)
     elif args.modelpath:
-        scf = get_scf(args.type, path=args.modelpath)
+        scf = get_scf(args.type, path=args.modelpath, inserts=args.loadfa)
     else:
         scf = get_scf(args.type)
     scf.nsteps = args.scf_steps
@@ -237,7 +208,7 @@ if __name__ == '__main__':
         print("\n ================================= \n")
         print("FREEZING SCF MODEL.XC AND APPENDING NEW LAYER")
         print("\n ================================= \n")
-        freeze_append_xc(scf, args.freezeappend)
+        freeze_append_xc(scf, args.freezeappend, args.outputlayergrad)
 
     if args.gradientclip and args.gcliphook and not args.gclipnorm:
         print("Registering Backward Hook to Clip Gradient")
@@ -458,7 +429,10 @@ if __name__ == '__main__':
                         if reaction == 2:
                             print("REACTION TYPE: 2. A+B -> AB")
                             ref_dict['AB'] = e_ref
-                            pred_dict['AB'] = results['E'][-1:]
+                            if sc:
+                                pred_dict['AB'] = results['E'][skip_steps:]
+                            else:
+                                pred_dict['AB'] = results['E'][-1:]
                         #ELSE if Reaction type is 1, it is an A->A reaction with some charge difference,
                         #Typically, reactant is charged so reaction == 1 is neutral
                         #TODO: Why multiply by 2 here?
@@ -489,7 +463,7 @@ if __name__ == '__main__':
                         else:
                             #ref_dict[''.join(atoms[idx].get_chemical_symbols())] = torch.zeros_like(e_ref)
                             ref_dict[''.join(atoms[idx].get_chemical_symbols())] = e_ref
-                            pred_dict[''.join(atoms[idx].get_chemical_symbols())] = results['E'][-1:]
+                            pred_dict[''.join(atoms[idx].get_chemical_symbols())] = results['E'][skip_steps:]
                         loss += sum([losses_eval[key]*losses[key][1] for key in losses])
                         print(loss)
                     if not results:

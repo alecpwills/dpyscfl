@@ -540,6 +540,174 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
     return e_base, np.eye(3), matrices
 
 
+def get_symmetrized_grid(mol, mf, n_rad=20, n_ang=10, print_stat=True, method= half_circle, return_errors = False):
+    """_summary_
+
+    Args:
+        mol (_type_): _description_
+        mf (_type_): _description_
+        n_rad (int, optional): _description_. Defaults to 20.
+        n_ang (int, optional): _description_. Defaults to 10.
+        print_stat (bool, optional): _description_. Defaults to True.
+        method (_type_, optional): _description_. Defaults to half_circle.
+        return_errors (bool, optional): _description_. Defaults to False.
+    """
+    dm = mf.make_rdm1()
+    if dm.ndim != 3:
+#         dm = np.sum(dm, axis=0)
+        dm = np.stack([dm,dm],axis=0)*0.5
+#         dm = dm[0]
+#     rho_ex = mf._numint.get_rho(mol, dm, mf.grids)
+    rho_ex_a = mf._numint.eval_rho(mol, mf._numint.eval_ao(mol, mf.grids.coords, deriv=2) , dm[0], xctype='metaGGA')
+    rho_ex_b = mf._numint.eval_rho(mol, mf._numint.eval_ao(mol, mf.grids.coords, deriv=2) , dm[1], xctype='metaGGA')
+
+    q_ex_a = np.sum(rho_ex_a[0] * mf.grids.weights)
+    q_ex_b = np.sum(rho_ex_b[0] * mf.grids.weights)
+
+    exc_ex = np.sum(mf._numint.eval_xc(mf.xc, (rho_ex_a,rho_ex_b),spin=1)[0]*mf.grids.weights*(rho_ex_a[0]+rho_ex_b[0]))
+
+    print("Using method", method, " for grid symmetrization")
+    if mf.xc == 'SCAN' or mf.xc == 'TPSS':
+        meta = True
+    else:
+        meta = False
+    print("Using n_rad={}, n_ang={} in {}".format(n_rad, n_ang, method))
+    coords, weights = half_circle(mf, mol, n_rad, n_ang)
+ 
+    exc = mf._numint.eval_xc(mf.xc, (rho_ex_a,rho_ex_b),spin=1)[0]
+    vxc = mf._numint.eval_xc(mf.xc, rho_ex_a +rho_ex_b)[1][0]
+    if meta:
+        vtau = mf._numint.eval_xc(mf.xc, rho_ex_a +rho_ex_b)[1][3]
+    aoi = mf._numint.eval_ao(mol, mf.grids.coords, deriv = 2)
+
+    vmunu1 = np.einsum('i,i,ij,ik->jk', mf.grids.weights, vxc,aoi[0],aoi[0])
+    if meta:
+        vtmunu1  = np.einsum('i,lij,lik->jk',vtau*mf.grids.weights, aoi[1:4],aoi[1:4])
+
+    mf.grids.coords = coords
+    mf.grids.weights = weights
+
+    rho_sym_a = mf._numint.eval_rho(mol, mf._numint.eval_ao(mol, mf.grids.coords, deriv=2) , dm[0], xctype='metaGGA')
+    rho_sym_b = mf._numint.eval_rho(mol, mf._numint.eval_ao(mol, mf.grids.coords, deriv=2) , dm[1], xctype='metaGGA')
+
+    q_sym_a = np.sum(rho_sym_a[0] * mf.grids.weights)
+    q_sym_b = np.sum(rho_sym_b[0] * mf.grids.weights)
+
+    exc_sym = np.sum(mf._numint.eval_xc(mf.xc, (rho_sym_a,rho_sym_b),spin=1)[0]*mf.grids.weights*(rho_sym_a[0]+rho_sym_b[0]))
+    if print_stat:
+        print('{:10.6f}e   ||{:10.6f}e   ||{:10.6f}e'.format(q_ex_a, q_sym_a, np.abs(q_ex_a-q_sym_a)))
+        print('{:10.6f}e   ||{:10.6f}e   ||{:10.6f}e'.format(q_ex_b, q_sym_b, np.abs(q_ex_b-q_sym_b)))
+        print('{:10.3f}mH  ||{:10.3f}mH  ||{:10.3f}  microH'.format(1000*exc_ex, 1000*exc_sym, 1e6*np.abs(exc_ex-exc_sym)))
+    error = 1e6*np.abs(exc_ex-exc_sym)
+
+    exc = mf._numint.eval_xc(mf.xc, (rho_sym_a,rho_sym_b),spin=1)[0]
+    vxc = mf._numint.eval_xc(mf.xc, rho_sym_a +rho_sym_b)[1][0]
+    if meta:
+        vtau = mf._numint.eval_xc(mf.xc, rho_sym_a +rho_sym_b)[1][3]
+    aoi = mf._numint.eval_ao(mol, mf.grids.coords, deriv =2)
+
+    vmunu2 = np.einsum('i,i,ij,ik->jk',mf.grids.weights, vxc,aoi[0],aoi[0])
+    if meta:
+        vtmunu2  = np.einsum('i,lij,lik->jk',vtau*mf.grids.weights,aoi[1:4],aoi[1:4])
+
+    L = get_L(mol)
+    scaling = get_m_mask(mol)
+    
+    vmunu2 = np.einsum('ij,jk,kl->il', L, vmunu2, L.T)*scaling
+
+    if meta:
+        vtmunu2 = np.einsum('ij,jk,kl->il', L, vtmunu2, L.T)*scaling
+        vterr = vtmunu1 - vtmunu2
+    verr = vmunu1 - vmunu2
+    if print_stat:print({True: 'Potentials identical', False: 'Potentials not identical {}'.format(np.max(np.abs(verr)))}[np.allclose(vmunu1,vmunu2,atol=1e-5)])
+    if print_stat and meta:print({True: 'tau Potentials identical', False: 'tau Potentials not identical {}'.format(np.max(np.abs(vterr)))}[np.allclose(vtmunu1,vtmunu2,atol=1e-5)])
+
+    if return_errors:
+        if meta:
+            return (mf.grids.coords, mf.grids.weights, L, scaling), ((vmunu1, vmunu2), (vtmunu1, vtmunu2)) 
+        else:
+            return (mf.grids.coords, mf.grids.weights, L, scaling), ((vmunu1, vmunu2)) 
+    else:
+        return mf.grids.coords, mf.grids.weights, L, scaling
+
+def gen_atomic_grids(mol, atom_grid={}, radi_method=radi.gauss_chebyshev,
+                     level=3, nang=20, prune=dft.gen_grid.nwchem_prune, **kwargs):
+    """Adapted from pyscf code.
+    Generate number of radial grids and angular grids for the given molecule.
+
+
+    Args:
+        mol (_type_): _description_
+        atom_grid (dict, optional): _description_. Defaults to {}.
+        radi_method (_type_, optional): _description_. Defaults to radi.gauss_chebyshev.
+        level (int, optional): _description_. Defaults to 3.
+        nang (int, optional): _description_. Defaults to 20.
+        prune (_type_, optional): _description_. Defaults to dft.gen_grid.nwchem_prune.
+
+    Raises:
+        ValueError: _description_
+
+    Returns:
+        A dict, with the atom symbol for the dict key.  For each atom type,
+        the dict value has two items: one is the meshgrid coordinates wrt the
+        atom center; the second is the volume of that grid.
+
+    """
+    '''
+    Adapted from pyscf code.
+    Generate number of radial grids and angular grids for the given molecule.
+
+    Returns:
+        A dict, with the atom symbol for the dict key.  For each atom type,
+        the dict value has two items: one is the meshgrid coordinates wrt the
+        atom center; the second is the volume of that grid.
+    '''
+    if isinstance(atom_grid, (list, tuple)):
+        atom_grid = dict([(mol.atom_symbol(ia), atom_grid)
+                          for ia in range(mol.natm)])
+    atom_grids_tab = {}
+    for ia in range(mol.natm):
+        symb = mol.atom_symbol(ia)
+
+        if symb not in atom_grids_tab:
+            chg = gto.charge(symb)
+            if symb in atom_grid:
+                n_rad, n_ang = atom_grid[symb]
+                if n_ang not in LEBEDEV_NGRID:
+                    if n_ang in LEBEDEV_ORDER:
+                        logger.warn(mol, 'n_ang %d for atom %d %s is not '
+                                    'the supported Lebedev angular grids. '
+                                    'Set n_ang to %d', n_ang, ia, symb,
+                                    LEBEDEV_ORDER[n_ang])
+                        n_ang = LEBEDEV_ORDER[n_ang]
+                    else:
+                        raise ValueError('Unsupported angular grids %d' % n_ang)
+            else:
+                #ALEC
+                print("symb not in atom_grid, lookup pyscf.dft.gen_grid._default_rad({},{})".format(chg, level))
+                if level > 9:
+                    print("error in level selection, rewriting to default pyscf value. level = {} -> 3".format(level))
+                    level = 3
+                n_rad = dft.gen_grid._default_rad(chg, level)
+#                 n_ang = dft.gen_grid._default_ang(chg, level)
+            rad, dr = radi_method(n_rad, chg, ia, **kwargs)
+
+#             rad_weight = 4*numpy.pi * rad**2 * dr
+
+            phi, dphi = np.polynomial.legendre.leggauss(nang)
+            phi = np.arccos(phi)
+
+            x = np.outer(rad, np.cos(phi)).flatten()
+            y = np.outer(rad, np.sin(phi)).flatten()
+
+            dxy = np.outer(dr*rad**2, dphi)
+
+            weights = (dxy*2*np.pi).flatten()
+        #     coords = np.stack([y, 0*y, x],axis=-1)
+            coords = np.stack([y, 0*y, x],axis=-1)
+
+            atom_grids_tab[symb] = coords, weights
+    return atom_grids_tab
 
 
 def half_circle(mf, mol, level, n_ang = 25):

@@ -45,7 +45,7 @@ if __name__ == '__main__':
     distances = np.arange(len(atoms))
     if not args.sequential:
         baseline = [old_get_datapoint(d, basis=basis, grid_level=d.info.get('grid_level', 1),
-                                xc=func, zsym=d.info.get('sym',False),
+                                xc=func, zsym=d.info.get('sym',True),
                                 n_rad=d.info.get('n_rad',30), n_ang=d.info.get('n_ang',15),
                                 init_guess=False, spin = d.info.get('spin',None),
                                 pol=pol.get(''.join(d.get_chemical_symbols()), False), do_fcenter=True,

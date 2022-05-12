@@ -14,7 +14,7 @@ from ase.units import Bohr
 from datetime import datetime
 import os, psutil, tarfile, argparse, json
 #Validation Imports
-from eval import KS, eval_xc
+#from eval import KS, eval_xc
 
 process = psutil.Process(os.getpid())
 #dpyscf_dir = os.environ.get('DPYSCF_DIR','..')
@@ -32,9 +32,9 @@ parser.add_argument('--E_weight', metavar='e_weight', type=float, default=0.01, 
 parser.add_argument('--rho_weight', metavar='rho_weight', type=float, default=20, help='Weight of density term in loss function (25)')
 parser.add_argument('--modelpath', metavar='modelpath', type=str, default='', help='Net Checkpoint location to continue training')
 parser.add_argument('--optimpath', metavar='optimpath', type=str, default='', help='Optimizer Checkpoint location to continue training')
-parser.add_argument('--logpath', metavar='logpath', type=str, default='log/', help='Logging directory (log/)')
+parser.add_argument('--logpath', metavar='logpath', action='store', type=str, default='log/', help='Logging directory (log/)')
 parser.add_argument('--testrun', action='store_true', help='Do a test run over all molecules before training')
-parser.add_argument('--lr', metavar='lr', type=float, default=0.0001, help='Learning rate (0.0001)')
+parser.add_argument('--lr', metavar='lr', type=float, action='store', default=0.0001, help='Learning rate (0.0001)')
 parser.add_argument('--l2', metavar='l2', type=float, default=1e-8, help='Weight decay (1e-8)')
 parser.add_argument('--hnorm', action='store_true', help='Use H energy and density in loss')
 parser.add_argument('--print_stdout', action='store_true', help='Print to stdout instead of logfile')
@@ -128,8 +128,8 @@ if __name__ == '__main__':
     skips = []
 
     #Validation Molecules
-    valats = read(args.valtraj, ':')
-    valsys = [103, 14, 23, 5, 10, 79, 27, 105] #Validation
+    #valats = read(args.valtraj, ':')
+    #valsys = [103, 14, 23, 5, 10, 79, 27, 105] #Validation
 
 
     pop = []

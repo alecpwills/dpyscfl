@@ -18,6 +18,7 @@ parser.add_argument('func', action='store', choices=['PBE','SCAN'], help='The XC
 parser.add_argument('atoms', action='store', type=str, help='Location of the .xyz/.traj file to read into ASE Atoms object, which will be used to generate baseline.')
 parser.add_argument('-r', '--ref_path', action='store', default='', help='Location of reference DMs and energies.')
 parser.add_argument('--sequential', action="store_true", help='Whether to get_datapoint individually or use list then write')
+parser.add_argument('--dfit', action='store_true', default=False, help='Generate density fitting matrices or not')
 args = parser.parse_args()
 
 
@@ -39,6 +40,8 @@ if __name__ == '__main__':
     atoms = read(args.atoms,':')
     indices = np.arange(len(atoms))
 
+    #as implemented, pol is always false.
+    #in the function call, this is empty
     pol = {}
     basis = '6-311++G(3df,2pd)'
 
@@ -49,7 +52,7 @@ if __name__ == '__main__':
                                 n_rad=d.info.get('n_rad',30), n_ang=d.info.get('n_ang',15),
                                 init_guess=False, spin = d.info.get('spin',None),
                                 pol=pol.get(''.join(d.get_chemical_symbols()), False), do_fcenter=True,
-                                ref_path=args.ref_path, ref_index= idx,ref_basis='6-311++G(3df,2pd)', dfit=True) for idx, d in zip(indices, atoms)]
+                                ref_path=args.ref_path, ref_index= idx,ref_basis='6-311++G(3df,2pd)', dfit=args.dfit) for idx, d in zip(indices, atoms)]
 
         E_base =  [r[0] for r in baseline]
         DM_base = [r[1] for r in baseline]
@@ -65,11 +68,11 @@ if __name__ == '__main__':
     else:
         for idx, d in zip(indices, atoms):
             baseline = old_get_datapoint(d, basis=basis, grid_level=d.info.get('grid_level', 1),
-                        xc=func, zsym=d.info.get('sym',False),
+                        xc=func, zsym=d.info.get('sym',True),
                         n_rad=d.info.get('n_rad',30), n_ang=d.info.get('n_ang',15),
                         init_guess=False, spin = d.info.get('spin',None),
                         pol=pol.get(''.join(d.get_chemical_symbols()), False), do_fcenter=True,
-                        ref_path=args.ref_path, ref_index= idx,ref_basis='6-311++G(3df,2pd)', dfit=True)
+                        ref_path=args.ref_path, ref_index= idx,ref_basis='6-311++G(3df,2pd)', dfit=args.dfit)
 
             E_base =  baseline[0]
             DM_base = baseline[1]

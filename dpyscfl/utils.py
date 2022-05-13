@@ -424,8 +424,6 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
     Returns:
         (float, np.array, dict): (Baseline energy from mf.energy_tot(), 3D Identity matrix, dict of matrices generated)
     """
-    #Force False on things outdated until refactor
-    zsym = False
 
     print(atoms)
     print(basis)
@@ -493,10 +491,12 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
         eC_base = read(os.path.join(atoms.info['chargeRef'], 'results.traj'), atoms.info['baseidx']).calc.results['energy']
         e_base = (1-atoms.info['fractional'])*e0_base + atoms.info['fractional']*eC_base
     elif ref_path and not atoms.info.get('fractional', None):
-        if atoms.info.get('sc', True) and not atoms.info.get('reaction', False):
-            print('Loading reference density')
-            dm_base = np.load(ref_path+ '/{}_{}.dm.npy'.format(ref_index, atoms.get_chemical_formula()))
-            print("Reference DM loaded. Shape: {}".format(dm_base.shape))
+        #why do we not use reference here when we still have it?
+        #if atoms.info.get('sc', True) and not atoms.info.get('reaction', False):
+        #    print('Loading reference density')
+        #    dm_base = np.load(ref_path+ '/{}_{}.dm.npy'.format(ref_index, atoms.symbols))
+        dm_base = np.load(ref_path+ '/{}_{}.dm.npy'.format(ref_index, atoms.symbols))
+        print("Reference DM loaded. Shape: {}".format(dm_base.shape))
         if method == dft.UKS and dm_base.ndim == 2:
             dm_base = np.stack([dm_base,dm_base])*0.5
         if method == dft.RKS and dm_base.ndim == 3:
@@ -517,6 +517,7 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
                 method = line
             else:
                 method = half_circle
+            print("Getting symmetrized grid.")
             mf.grids.coords, mf.grids.weights, L, scaling = get_symmetrized_grid(mol, mf, n_rad, n_ang, method=method)
             features.update({'L': L, 'scaling': scaling})
         #If net spin or force polarized calculation
@@ -538,97 +539,6 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
     matrices.update(features)
 
     return e_base, np.eye(3), matrices
-
-
-def get_symmetrized_grid(mol, mf, n_rad=20, n_ang=10, print_stat=True, method= half_circle, return_errors = False):
-    """_summary_
-
-    Args:
-        mol (_type_): _description_
-        mf (_type_): _description_
-        n_rad (int, optional): _description_. Defaults to 20.
-        n_ang (int, optional): _description_. Defaults to 10.
-        print_stat (bool, optional): _description_. Defaults to True.
-        method (_type_, optional): _description_. Defaults to half_circle.
-        return_errors (bool, optional): _description_. Defaults to False.
-    """
-    dm = mf.make_rdm1()
-    if dm.ndim != 3:
-#         dm = np.sum(dm, axis=0)
-        dm = np.stack([dm,dm],axis=0)*0.5
-#         dm = dm[0]
-#     rho_ex = mf._numint.get_rho(mol, dm, mf.grids)
-    rho_ex_a = mf._numint.eval_rho(mol, mf._numint.eval_ao(mol, mf.grids.coords, deriv=2) , dm[0], xctype='metaGGA')
-    rho_ex_b = mf._numint.eval_rho(mol, mf._numint.eval_ao(mol, mf.grids.coords, deriv=2) , dm[1], xctype='metaGGA')
-
-    q_ex_a = np.sum(rho_ex_a[0] * mf.grids.weights)
-    q_ex_b = np.sum(rho_ex_b[0] * mf.grids.weights)
-
-    exc_ex = np.sum(mf._numint.eval_xc(mf.xc, (rho_ex_a,rho_ex_b),spin=1)[0]*mf.grids.weights*(rho_ex_a[0]+rho_ex_b[0]))
-
-    print("Using method", method, " for grid symmetrization")
-    if mf.xc == 'SCAN' or mf.xc == 'TPSS':
-        meta = True
-    else:
-        meta = False
-    print("Using n_rad={}, n_ang={} in {}".format(n_rad, n_ang, method))
-    coords, weights = half_circle(mf, mol, n_rad, n_ang)
- 
-    exc = mf._numint.eval_xc(mf.xc, (rho_ex_a,rho_ex_b),spin=1)[0]
-    vxc = mf._numint.eval_xc(mf.xc, rho_ex_a +rho_ex_b)[1][0]
-    if meta:
-        vtau = mf._numint.eval_xc(mf.xc, rho_ex_a +rho_ex_b)[1][3]
-    aoi = mf._numint.eval_ao(mol, mf.grids.coords, deriv = 2)
-
-    vmunu1 = np.einsum('i,i,ij,ik->jk', mf.grids.weights, vxc,aoi[0],aoi[0])
-    if meta:
-        vtmunu1  = np.einsum('i,lij,lik->jk',vtau*mf.grids.weights, aoi[1:4],aoi[1:4])
-
-    mf.grids.coords = coords
-    mf.grids.weights = weights
-
-    rho_sym_a = mf._numint.eval_rho(mol, mf._numint.eval_ao(mol, mf.grids.coords, deriv=2) , dm[0], xctype='metaGGA')
-    rho_sym_b = mf._numint.eval_rho(mol, mf._numint.eval_ao(mol, mf.grids.coords, deriv=2) , dm[1], xctype='metaGGA')
-
-    q_sym_a = np.sum(rho_sym_a[0] * mf.grids.weights)
-    q_sym_b = np.sum(rho_sym_b[0] * mf.grids.weights)
-
-    exc_sym = np.sum(mf._numint.eval_xc(mf.xc, (rho_sym_a,rho_sym_b),spin=1)[0]*mf.grids.weights*(rho_sym_a[0]+rho_sym_b[0]))
-    if print_stat:
-        print('{:10.6f}e   ||{:10.6f}e   ||{:10.6f}e'.format(q_ex_a, q_sym_a, np.abs(q_ex_a-q_sym_a)))
-        print('{:10.6f}e   ||{:10.6f}e   ||{:10.6f}e'.format(q_ex_b, q_sym_b, np.abs(q_ex_b-q_sym_b)))
-        print('{:10.3f}mH  ||{:10.3f}mH  ||{:10.3f}  microH'.format(1000*exc_ex, 1000*exc_sym, 1e6*np.abs(exc_ex-exc_sym)))
-    error = 1e6*np.abs(exc_ex-exc_sym)
-
-    exc = mf._numint.eval_xc(mf.xc, (rho_sym_a,rho_sym_b),spin=1)[0]
-    vxc = mf._numint.eval_xc(mf.xc, rho_sym_a +rho_sym_b)[1][0]
-    if meta:
-        vtau = mf._numint.eval_xc(mf.xc, rho_sym_a +rho_sym_b)[1][3]
-    aoi = mf._numint.eval_ao(mol, mf.grids.coords, deriv =2)
-
-    vmunu2 = np.einsum('i,i,ij,ik->jk',mf.grids.weights, vxc,aoi[0],aoi[0])
-    if meta:
-        vtmunu2  = np.einsum('i,lij,lik->jk',vtau*mf.grids.weights,aoi[1:4],aoi[1:4])
-
-    L = get_L(mol)
-    scaling = get_m_mask(mol)
-    
-    vmunu2 = np.einsum('ij,jk,kl->il', L, vmunu2, L.T)*scaling
-
-    if meta:
-        vtmunu2 = np.einsum('ij,jk,kl->il', L, vtmunu2, L.T)*scaling
-        vterr = vtmunu1 - vtmunu2
-    verr = vmunu1 - vmunu2
-    if print_stat:print({True: 'Potentials identical', False: 'Potentials not identical {}'.format(np.max(np.abs(verr)))}[np.allclose(vmunu1,vmunu2,atol=1e-5)])
-    if print_stat and meta:print({True: 'tau Potentials identical', False: 'tau Potentials not identical {}'.format(np.max(np.abs(vterr)))}[np.allclose(vtmunu1,vtmunu2,atol=1e-5)])
-
-    if return_errors:
-        if meta:
-            return (mf.grids.coords, mf.grids.weights, L, scaling), ((vmunu1, vmunu2), (vtmunu1, vtmunu2)) 
-        else:
-            return (mf.grids.coords, mf.grids.weights, L, scaling), ((vmunu1, vmunu2)) 
-    else:
-        return mf.grids.coords, mf.grids.weights, L, scaling
 
 def gen_atomic_grids(mol, atom_grid={}, radi_method=radi.gauss_chebyshev,
                      level=3, nang=20, prune=dft.gen_grid.nwchem_prune, **kwargs):
@@ -737,3 +647,186 @@ def half_circle(mf, mol, level, n_ang = 25):
     weights = pruned.weights
     
     return coords, weights
+
+def get_m_mask(mol):
+    m_dict = {'s':0, 
+             'px':1, 'pz':0, 'py':-1,
+             'dxy':-2, 'dyz':-1, 'dz^2':0, 'dxz':1, 'dx2-y2':2,
+             'fy^3':-3, 'fxyz':-2, 'fyz^2':-1, 'fz^3':0, 'fxz^2':1, 'fzx^2':2, 'fx^3':3,
+             'f-3':-3, 'f-2':-2, 'f-1':-1,'f0':0,'f1':1, 'f2':2, 'f3':3}
+    print(mol.atom, mol.ao_labels())
+    #ALEC ^ edited tags that were not included
+    try:
+        labels = [l.split()[2][1:] for l in mol.ao_labels()]
+        scount = 0
+        for il in range(len(labels)):
+            if labels[il] == 'f':
+                labels[il] = 'f{}'.format(int(scount))
+                scount+= 1
+                if scount == 4:
+                    scount = 0
+        print(labels)
+        basis_m = [m_dict[l] for l in labels]
+    except KeyError:
+        print('keyerror: orbital not in m_dict.keys()')
+        
+    m_mask = np.ones([len(basis_m),len(basis_m)])
+    for i,m1 in enumerate(basis_m) :
+        for j,m2 in enumerate(basis_m):
+            if not m1 == m2:
+                m_mask[i,j] = 0 
+    return m_mask
+
+
+def get_L(mol):
+    """_summary_
+
+    Args:
+        mol (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """
+    pys = np.where(['py' in l for l in mol.ao_labels()])[0]
+    pxs = np.where(['px' in l for l in mol.ao_labels()])[0]
+
+    dxys = np.where(['dxy' in l for l in mol.ao_labels()])[0]
+    dx2y2s = np.where(['dx2-y2' in l for l in mol.ao_labels()])[0]
+    dyzs = np.where(['dyz' in l for l in mol.ao_labels()])[0]
+    dxzs = np.where(['dxz' in l for l in mol.ao_labels()])[0]
+    
+    fx3s = np.where(['fx^3' in l for l in mol.ao_labels()])[0]
+    fy3s = np.where(['fy^3' in l for l in mol.ao_labels()])[0]
+
+    fzx2s = np.where(['fzx^2' in l for l in mol.ao_labels()])[0]
+    fxyzs =  np.where(['fxyz' in l for l in mol.ao_labels()])[0]
+
+    fxz2s = np.where(['fxz^2' in l for l in mol.ao_labels()])[0]
+    fyz2s =  np.where(['fyz^2' in l for l in mol.ao_labels()])[0]
+
+    L = np.eye(len(mol.ao_labels()))
+    for px,py in zip(pxs,pys):
+        L[px,py] = 2/np.sqrt(2)
+        L[py,py] = 1/np.sqrt(2)
+        L[px,px] = 1/np.sqrt(2)
+        
+    for dxy,dx2y2 in zip(dxys,dx2y2s):
+        L[dxy,dx2y2] = 2/np.sqrt(2)
+        L[dx2y2,dx2y2] = 1/np.sqrt(2)
+        L[dxy,dxy] = 1/np.sqrt(2)
+        
+    for dyz,dxz in zip(dyzs,dxzs):
+        L[dyz,dxz] = 2/np.sqrt(2)
+        L[dxz,dxz] = 1/np.sqrt(2)
+        L[dyz,dyz] = 1/np.sqrt(2)
+        
+    for fx3, fy3 in zip(fx3s,fy3s):
+        L[fy3,fx3] = 2/np.sqrt(2)
+        L[fx3,fx3] = 1/np.sqrt(2)
+        L[fy3,fy3] = 1/np.sqrt(2)
+        
+    for fzx2, fxyz in zip(fzx2s,fxyzs):
+        L[fxyz,fzx2] = 2/np.sqrt(2)
+        L[fzx2,fzx2] = 1/np.sqrt(2)
+        L[fxyz,fxyz] = 1/np.sqrt(2)
+        
+    for fxz2, fyz2 in zip(fxz2s,fyz2s):
+        L[fyz2, fxz2]  = 2/np.sqrt(2)
+        L[fxz2, fxz2]  = 1/np.sqrt(2)
+        L[fyz2, fyz2]  = 1/np.sqrt(2)
+        
+    L = .5*(L + L.T)
+    return L
+
+
+
+def get_symmetrized_grid(mol, mf, n_rad=20, n_ang=10, print_stat=True, method= half_circle, return_errors = False):
+    """_summary_
+
+    Args:
+        mol (_type_): _description_
+        mf (_type_): _description_
+        n_rad (int, optional): _description_. Defaults to 20.
+        n_ang (int, optional): _description_. Defaults to 10.
+        print_stat (bool, optional): _description_. Defaults to True.
+        method (_type_, optional): _description_. Defaults to half_circle.
+        return_errors (bool, optional): _description_. Defaults to False.
+    """
+    dm = mf.make_rdm1()
+    if dm.ndim != 3:
+#         dm = np.sum(dm, axis=0)
+        dm = np.stack([dm,dm],axis=0)*0.5
+#         dm = dm[0]
+#     rho_ex = mf._numint.get_rho(mol, dm, mf.grids)
+    rho_ex_a = mf._numint.eval_rho(mol, mf._numint.eval_ao(mol, mf.grids.coords, deriv=2) , dm[0], xctype='metaGGA')
+    rho_ex_b = mf._numint.eval_rho(mol, mf._numint.eval_ao(mol, mf.grids.coords, deriv=2) , dm[1], xctype='metaGGA')
+
+    q_ex_a = np.sum(rho_ex_a[0] * mf.grids.weights)
+    q_ex_b = np.sum(rho_ex_b[0] * mf.grids.weights)
+
+    exc_ex = np.sum(mf._numint.eval_xc(mf.xc, (rho_ex_a,rho_ex_b),spin=1)[0]*mf.grids.weights*(rho_ex_a[0]+rho_ex_b[0]))
+
+    print("Using method", method, " for grid symmetrization")
+    if mf.xc == 'SCAN' or mf.xc == 'TPSS':
+        meta = True
+    else:
+        meta = False
+    print("Using n_rad={}, n_ang={} in {}".format(n_rad, n_ang, method))
+    coords, weights = half_circle(mf, mol, n_rad, n_ang)
+ 
+    exc = mf._numint.eval_xc(mf.xc, (rho_ex_a,rho_ex_b),spin=1)[0]
+    vxc = mf._numint.eval_xc(mf.xc, rho_ex_a +rho_ex_b)[1][0]
+    if meta:
+        vtau = mf._numint.eval_xc(mf.xc, rho_ex_a +rho_ex_b)[1][3]
+    aoi = mf._numint.eval_ao(mol, mf.grids.coords, deriv = 2)
+
+    vmunu1 = np.einsum('i,i,ij,ik->jk', mf.grids.weights, vxc,aoi[0],aoi[0])
+    if meta:
+        vtmunu1  = np.einsum('i,lij,lik->jk',vtau*mf.grids.weights, aoi[1:4],aoi[1:4])
+
+    mf.grids.coords = coords
+    mf.grids.weights = weights
+
+    rho_sym_a = mf._numint.eval_rho(mol, mf._numint.eval_ao(mol, mf.grids.coords, deriv=2) , dm[0], xctype='metaGGA')
+    rho_sym_b = mf._numint.eval_rho(mol, mf._numint.eval_ao(mol, mf.grids.coords, deriv=2) , dm[1], xctype='metaGGA')
+
+    q_sym_a = np.sum(rho_sym_a[0] * mf.grids.weights)
+    q_sym_b = np.sum(rho_sym_b[0] * mf.grids.weights)
+
+    exc_sym = np.sum(mf._numint.eval_xc(mf.xc, (rho_sym_a,rho_sym_b),spin=1)[0]*mf.grids.weights*(rho_sym_a[0]+rho_sym_b[0]))
+    if print_stat:
+        print('{:10.6f}e   ||{:10.6f}e   ||{:10.6f}e'.format(q_ex_a, q_sym_a, np.abs(q_ex_a-q_sym_a)))
+        print('{:10.6f}e   ||{:10.6f}e   ||{:10.6f}e'.format(q_ex_b, q_sym_b, np.abs(q_ex_b-q_sym_b)))
+        print('{:10.3f}mH  ||{:10.3f}mH  ||{:10.3f}  microH'.format(1000*exc_ex, 1000*exc_sym, 1e6*np.abs(exc_ex-exc_sym)))
+    error = 1e6*np.abs(exc_ex-exc_sym)
+
+    exc = mf._numint.eval_xc(mf.xc, (rho_sym_a,rho_sym_b),spin=1)[0]
+    vxc = mf._numint.eval_xc(mf.xc, rho_sym_a +rho_sym_b)[1][0]
+    if meta:
+        vtau = mf._numint.eval_xc(mf.xc, rho_sym_a +rho_sym_b)[1][3]
+    aoi = mf._numint.eval_ao(mol, mf.grids.coords, deriv =2)
+
+    vmunu2 = np.einsum('i,i,ij,ik->jk',mf.grids.weights, vxc,aoi[0],aoi[0])
+    if meta:
+        vtmunu2  = np.einsum('i,lij,lik->jk',vtau*mf.grids.weights,aoi[1:4],aoi[1:4])
+
+    L = get_L(mol)
+    scaling = get_m_mask(mol)
+    
+    vmunu2 = np.einsum('ij,jk,kl->il', L, vmunu2, L.T)*scaling
+
+    if meta:
+        vtmunu2 = np.einsum('ij,jk,kl->il', L, vtmunu2, L.T)*scaling
+        vterr = vtmunu1 - vtmunu2
+    verr = vmunu1 - vmunu2
+    if print_stat:print({True: 'Potentials identical', False: 'Potentials not identical {}'.format(np.max(np.abs(verr)))}[np.allclose(vmunu1,vmunu2,atol=1e-5)])
+    if print_stat and meta:print({True: 'tau Potentials identical', False: 'tau Potentials not identical {}'.format(np.max(np.abs(vterr)))}[np.allclose(vtmunu1,vtmunu2,atol=1e-5)])
+
+    if return_errors:
+        if meta:
+            return (mf.grids.coords, mf.grids.weights, L, scaling), ((vmunu1, vmunu2), (vtmunu1, vtmunu2)) 
+        else:
+            return (mf.grids.coords, mf.grids.weights, L, scaling), ((vmunu1, vmunu2)) 
+    else:
+        return mf.grids.coords, mf.grids.weights, L, scaling
+

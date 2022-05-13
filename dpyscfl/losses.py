@@ -103,6 +103,7 @@ def rho_loss(results, loss, **kwargs):
         print("RESULTS N_ELEC: ", results['n_elec'])
         rho = contract('ij,ik,jk->i',
                            ao_eval[0], ao_eval[0], dm)
+        print("RHO PRED: {}".format(rho.shape))
         #drho = torch.sqrt(torch.sum((rho-rho_ref)**2*results['grid_weights'])/results['n_elec'][0,0]**2)
         drho = torch.sqrt(torch.sum((rho-rho_ref)**2*results['grid_weights'])/results['n_elec'][0]**2)
         if torch.isnan(drho):

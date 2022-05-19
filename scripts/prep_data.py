@@ -19,6 +19,7 @@ parser.add_argument('atoms', action='store', type=str, help='Location of the .xy
 parser.add_argument('-r', '--ref_path', action='store', default='', help='Location of reference DMs and energies.')
 parser.add_argument('--sequential', action="store_true", help='Whether to get_datapoint individually or use list then write')
 parser.add_argument('--dfit', action='store_true', default=False, help='Generate density fitting matrices or not')
+parser.add_argument('--mingridlevel', action='store', type=int, default=3, help='Minimum grid level to use in generation of matrices. Defaults to 3, as paper suggests. If atom has larger specified grid_level, larger is used')
 args = parser.parse_args()
 
 
@@ -47,7 +48,7 @@ if __name__ == '__main__':
 
     distances = np.arange(len(atoms))
     if not args.sequential:
-        baseline = [old_get_datapoint(d, basis=basis, grid_level=d.info.get('grid_level', 1),
+        baseline = [old_get_datapoint(d, basis=basis, grid_level= max(d.info.get('grid_level', 1), args.mingridlevel),
                                 xc=func, zsym=d.info.get('sym',True),
                                 n_rad=d.info.get('n_rad',30), n_ang=d.info.get('n_ang',15),
                                 init_guess=False, spin = d.info.get('spin',None),

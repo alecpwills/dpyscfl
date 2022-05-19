@@ -190,6 +190,7 @@ class SCF(torch.nn.Module):
         self.energy_tot = energy_tot().to(device)
         self.make_rdm1 = make_rdm1().to(device)
         self.xc = xc
+        #ncore parameter used in xcdiff, not here
 
     def forward(self, dm, matrices, sc=True):
         """Forward pass SCF cycle
@@ -224,6 +225,7 @@ class SCF(torch.nn.Module):
 
         grid_weights = matrices.get('grid_weights',[None])[0]
         grid_coords = matrices.get('grid_coords',[None])[0]
+        #edge index called for here in xcdiff, not here
 
         # Atomic orbitals evaluated on grid
         ao_eval = matrices.get('ao_eval',[None])[0]
@@ -245,16 +247,18 @@ class SCF(torch.nn.Module):
         deltadm = []
         nsteps = self.nsteps
 
-        if not self.xc.training:
-            #if not training, backpropagation doesn't happen so don't need derivatives beyond
-            #calculation at a given step
-            create_graph = False
-        else:
-            create_graph = True
+        # if not self.xc.training:
+        #     #if not training, backpropagation doesn't happen so don't need derivatives beyond
+        #     #calculation at a given step
+        #     create_graph = False
+        # else:
+        #     create_graph = True
 
 
         # SCF iteration loop
         for step in range(nsteps):
+            #some diis happens here in xcdiff, not implemented here
+
             alpha = (self.alpha)**(step)+0.3
             beta = (1-alpha)
             dm = alpha * dm + beta * dm_old
@@ -270,6 +274,7 @@ class SCF(torch.nn.Module):
                 self.xc.ao_eval = ao_eval
                 self.xc.grid_weights = grid_weights
                 self.xc.grid_coords = grid_coords
+                #edge index, ml_ovlp called for here in xcdiff
                 if vh_on_grid is not None:
                     self.xc.vh_on_grid = vh_on_grid
                     self.xc.df_2c_inv = df_2c_inv
@@ -313,6 +318,9 @@ class SCF(torch.nn.Module):
             E.append(e_tot)
             if not sc:
                 break
+
+        #in xcdiff, things happen here with mo_occ[:self.ncore], e_ip etc. not implemented here
+        
         results = {'E': torch.cat(E), 'dm':dm, 'mo_energy':mo_e}
 
         return results

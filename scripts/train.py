@@ -13,6 +13,16 @@ from functools import partial
 from ase.units import Bohr
 from datetime import datetime
 import os, psutil, tarfile, argparse, json
+import tqdm, inspect
+old_print = print
+def new_print(*args, **kwargs):
+    # if tqdm.tqdm.write raises error, use builtin print
+    try:
+        tqdm.tqdm.write(*args, **kwargs)
+    except:
+        old_print(*args, ** kwargs)
+# globaly replace print with new_print
+inspect.builtins.print = new_print
 #Validation Imports
 #from eval import KS, eval_xc
 
@@ -125,7 +135,7 @@ if __name__ == '__main__':
     #Some molecules in the trajectory are not needed to reproduce xcdiff training set.
     #But don't pop them, because indexing important.
     #skips = ['O2', 'Cl2', 'HCl']
-    skips = []
+    skips = ['O2']
 
     #Validation Molecules
     #valats = read(args.valtraj, ':')
@@ -262,7 +272,6 @@ if __name__ == '__main__':
     AE_mult = 1
     #Loss Functions -- Density
     density_loss = rho_alt_loss if args.rho_alt else rho_loss
-    ##TODO: no reason to make these tuples
     # args.rho_weight defaults to 20, per the paper
     # args.E_weight defaults to 0.01, per the paper
     # AE Loss has weight 1 by default, per the paper, but decreases for non-sc
@@ -300,7 +309,9 @@ if __name__ == '__main__':
                 #Randomly choose training order
                 train_order = np.arange(len(molecules)).astype(int)
                 np.random.shuffle(train_order)
-                for m_idx in train_order:
+                t = tqdm.tqdm(train_order)
+                for m_idx in t:
+#                for m_idx in train_order:
                     molecule = list(molecules.keys())[m_idx]
                     print("================================")
                     print('--------------{}----------------'.format(m_idx))
@@ -334,6 +345,9 @@ if __name__ == '__main__':
                         #if idx not in molecules[molecule]:
                         #    print("Sub-index {} not in ".format(idx), molecules[molecule])
                         #    continue
+                        t.set_postfix({"Epoch": epoch, 'Training Label':molecule, 'Molecules': [atoms[idx].get_chemical_formula() for idx in molecules[molecule]],
+                        'Current Sub-Molecule': atoms[idx].get_chemical_formula()})
+
                         print("Calculating sub-atoms in molecule -- ", atoms[idx])
                         if args.print_names: print(atoms[idx])
                         if atoms[idx].info.get('oldprep', False):
@@ -382,6 +396,7 @@ if __name__ == '__main__':
                         print("E_REF: {}".format(e_ref))
                         print("E_PRED: {}".format(results['E']))
                         #Add matrix keys to results dict
+                        print("Adding reference matrices to results.")
                         results['dm_ref'] = dm_ref
                         results['fcenter'] = matrices.get('fcenter',None)
                         results['rho'] = matrices['rho']
@@ -393,6 +408,13 @@ if __name__ == '__main__':
                         results['e_ip_ref'] = matrices['e_ip']
                         results['mo_occ'] = matrices['mo_occ']
                         print("RESULTS MATRICES EXTRACTED")
+                        print("================================")
+                        print("RESULTS MATRICES SHAPES")
+                        for k,v in results.items():
+                            if k == 'fcenter':
+                                continue
+                            print("{}   ---   {}".format(k, v.shape))
+                        print("================================")
                         #If radical, multiplicative factor
                         if atoms[idx].info.get('radical', False):
                             results['rho'] *= args.radical_factor
@@ -421,7 +443,6 @@ if __name__ == '__main__':
                         losses_eval = {key: losses[key][0](results)/a_count[idx] for key in losses}
                         print("LOSSES_EVAL: ", losses_eval)
                         #Update running losses with new losses
-                        #TODO: why is .item() needed????
                         running_losses.update({key:running_losses[key] + losses_eval[key].item() for key in losses})
                         
                         #IF Reaction type is 2, it is an A+B -> AB reaction.
@@ -435,7 +456,6 @@ if __name__ == '__main__':
                                 pred_dict['AB'] = results['E'][-1:]
                         #ELSE if Reaction type is 1, it is an A->A reaction with some charge difference,
                         #Typically, reactant is charged so reaction == 1 is neutral
-                        #TODO: Why multiply by 2 here?
                         elif reaction == 1:
                             print("REACTION TYPE: 1. A -> A")
                             ref_dict['AA'] = e_ref*2

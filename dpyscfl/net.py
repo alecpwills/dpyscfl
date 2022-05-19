@@ -135,8 +135,11 @@ class XC(torch.nn.Module):
             torch.Tensor: reduced kinetic energy density
         """
         uniform_factor = (3/10)*(3*np.pi**2)**(2/3)
-        tw = gamma/(8*rho+self.epsilon)
-        return torch.nn.functional.relu((tau - tw)/(uniform_factor*rho**(5/3)+tw*1e-3 + 1e-12))
+        tw = gamma/(8*(rho+self.epsilon))
+        #commented is dpyscflite version, uncommented is xcdiff version
+        #shouldn't change anything, but
+        #return torch.nn.functional.relu((tau - tw)/(uniform_factor*rho**(5/3)+tw*1e-3 + 1e-12))
+        return (tau - gamma/(8*(rho+self.epsilon)))/(uniform_factor*rho**(5/3)+self.epsilon)
 
     # Unit-less electrostatic potential
     def l_4(self, rho, nl):
@@ -195,6 +198,8 @@ class XC(torch.nn.Module):
                 descr3 = (1-torch.exp(-descr3**2/self.s_gam))*torch.log(descr3 + 1)
             else:
                 descr3 = self.l_2(rho0_a + rho0_b, gamma_a + gamma_b + 2*gamma_ab) # s
+                #line below in xcdiff, not dpyscfl
+                descr3 = descr3/((1+zeta)**(2/3) + (1-zeta)**2/3)
                 descr3 = descr3.unsqueeze(-1)
                 descr3 = (1-torch.exp(-descr3**2/self.s_gam))*torch.log(descr3 + 1)
             descr = torch.cat([descr, descr3],dim=-1)
@@ -203,8 +208,14 @@ class XC(torch.nn.Module):
                 descr4a = self.l_3(2*rho0_a, 4*gamma_a, 2*tau_a)
                 descr4b = self.l_3(2*rho0_b, 4*gamma_b, 2*tau_b)
                 descr4 = torch.cat([descr4a.unsqueeze(-1), descr4b.unsqueeze(-1)],dim=-1)
+                #below in xcdiff, not dpyscfl
+                descr4 = descr4**3/(descr4**2+self.epsilon)
             else:
                 descr4 = self.l_3(rho0_a + rho0_b, gamma_a + gamma_b + 2*gamma_ab, tau_a + tau_b)
+                #next 2 in xcdiff, not dpyscfl
+                descr4 = 2*descr4/((1+zeta)**(5/3) + (1-zeta)**(5/3))
+                descr4 = descr4**3/(descr4**2+self.epsilon)
+
                 descr4 = descr4.unsqueeze(-1)
             descr4 = torch.log((descr4 + 1)/2)
             descr = torch.cat([descr, descr4],dim=-1)
@@ -288,8 +299,22 @@ class XC(torch.nn.Module):
                                                     tau_b.unsqueeze(-1),
                                                     non_loc_a,
                                                     non_loc_b],dim=-1))
-            Exc += torch.sum(((rho0_a + rho0_b)*exc[:,0])*self.grid_weights)
+            #inplace modification throws MulBackwards0 error sometimes?
+            #Exc += torch.sum(((rho0_a + rho0_b)*exc[:,0])*self.grid_weights)
+            Exc = torch.sum(((rho0_a + rho0_b)*exc[:,0])*self.grid_weights)
+            # try:
+            #     Exc = torch.sum(((rho0_a + rho0_b)*exc[:,0])*self.grid_weights)
+            # except:
+            #     e = sys.exc_info()[0]
+            #     Exc = torch.sum(((rho0_a + rho0_b)*exc[:,0])*self.grid_weights)
+            #     print("Error detected")
+            #     print(e)                
 
+        #Below in xcdiff, not in dpyscfl
+        #However, keep commented out -- self.nxc_models not implemented
+        #if self.nxc_models:
+        #    for nxc_model in self.nxc_models:
+        #        Exc += nxc_model(dm, self.ml_ovlp)
 
         return Exc
 
@@ -317,6 +342,8 @@ class XC(torch.nn.Module):
         nl_b = nl[:,nl_size:]
 
         C_F= 3/10*(3*np.pi**2)**(2/3)
+        #in xcdiff, self.meta_local would change below assignments
+        #not used here
         rho0_a_ueg = rho0_a
         rho0_b_ueg = rho0_b
 
@@ -353,21 +380,38 @@ class XC(torch.nn.Module):
                         if torch.isnan(param).any():
                             print("NANS IN NETWORK WEIGHT -- {}".format(name))
                             raise ValueError("NaNs in Network Weights.")
+
+                    #Evaluate network with descriptors on grid
+                    #in xcdiff, edge_index is passed here, not in dpyscfl
                     exc = grid_model(descr,
                                       grid_coords = self.grid_coords)
                     #print("EXC GRID_MODEL C: ", exc)
 
-                    if self.pw_mult:
-                        exc_ab += (1 + exc)*self.pw_model(rs, zeta)
+                    #Included from xcdiff, 2dim exc -> spin polarized
+                    if exc.dim() == 2: #If using spin decomposition
+                        pw_alpha = self.pw_model(rs_a, torch.ones_like(rs_a))
+                        pw_beta = self.pw_model(rs_b, torch.ones_like(rs_b))
+                        pw = self.pw_model(rs, zeta)
+                        ec_alpha = (1 + exc[:,0])*pw_alpha*rho0_a/rho_tot
+                        ec_beta =  (1 + exc[:,1])*pw_beta*rho0_b/rho_tot
+                        ec_mixed = (1 + exc[:,2])*(pw*rho_tot - pw_alpha*rho0_a - pw_beta*rho0_b)/rho_tot
+                        exc_ab = ec_alpha + ec_beta + ec_mixed
                     else:
-                        exc_ab += exc
+                        if self.pw_mult:
+                            exc_ab += (1 + exc)*self.pw_model(rs, zeta)
+                        else:
+                            exc_ab += exc
+#                    if self.pw_mult:
+#                        exc_ab += (1 + exc)*self.pw_model(rs, zeta)
+#                    else:
+#                        exc_ab += exc
                 else:
                     if not 'x' in descr_dict:
                         descr_dict['x'] = descr_method(rho0_a, rho0_b, gamma_a, gamma_b,
                                                                          gamma_ab, nl_a, nl_b, tau_a, tau_b, spin_scaling = True)
                     descr = descr_dict['x']
 
-
+                    #in xcdiff, edge_index is passed here, not in dpyscfl
                     exc = grid_model(descr,
                                   grid_coords = self.grid_coords)
 
@@ -421,7 +465,17 @@ class C_L(torch.nn.Module):
             self.use = torch.Tensor(np.arange(n_input)).long().to(device)
         else:
             self.use = torch.Tensor(use).long().to(device)
-
+        #below net in dpyscflite, doesn't include softplus at end or double flag
+        # self.net = torch.nn.Sequential(
+        #         torch.nn.Linear(n_input, n_hidden),
+        #         torch.nn.GELU(),
+        #         torch.nn.Linear(n_hidden, n_hidden),
+        #         torch.nn.GELU(),
+        #         torch.nn.Linear(n_hidden, n_hidden),
+        #         torch.nn.GELU(),
+        #         torch.nn.Linear(n_hidden, 1),
+        #     ).to(device)
+        #below net from xcdiff, softplus, double. the self.sig is also from xcdiff
         self.net = torch.nn.Sequential(
                 torch.nn.Linear(n_input, n_hidden),
                 torch.nn.GELU(),
@@ -430,9 +484,13 @@ class C_L(torch.nn.Module):
                 torch.nn.Linear(n_hidden, n_hidden),
                 torch.nn.GELU(),
                 torch.nn.Linear(n_hidden, 1),
-            ).to(device)
+                torch.nn.Softplus()
+            ).double().to(device)
+        self.sig = torch.nn.Sigmoid()
 
         self.tanh = torch.nn.Tanh()
+        #self.lob section allows for different values here, default=2. xcdiff doesn't have this,
+        #assumes 2 always
         self.lob = lob
         if self.lob:
             self.lobf = LOB(self.lob)
@@ -453,11 +511,15 @@ class C_L(torch.nn.Module):
         inp = rho
         squeezed = -self.net(inp).squeeze()
         if self.ueg_limit:
-            ueg_lim = rho[...,self.use[0]]
+            #below not form used in xcdiff
+#            ueg_lim = rho[...,self.use[0]]
+            #below form used in xcdiff,
+            ueg_lim = self.tanh(rho[...,self.use[0]])
             if len(self.use) > 1:
                 ueg_lim_a = torch.pow(self.tanh(rho[...,self.use[1]]),2)
             else:
                 ueg_lim_a = 0
+            #xcdiff does not include this next comparison
             if len(self.use) > 2:
                 ueg_lim_nl = torch.sum(self.tanh(rho[...,self.use[2:]])**2,dim=-1)
             else:
@@ -466,7 +528,8 @@ class C_L(torch.nn.Module):
             ueg_factor = ueg_lim + ueg_lim_a + ueg_lim_nl
         else:
             ueg_factor = 1
-
+        #xcdiff below returns the negative of the negative inputs
+        #lob is sigmoid, so odd function, negatives cancel, so not needed
         if self.lob:
             return self.lobf(squeezed*ueg_factor)
         else:
@@ -496,6 +559,7 @@ class X_L(torch.nn.Module):
             self.use = torch.Tensor(np.arange(n_input)).long().to(device)
         else:
             self.use = torch.Tensor(use).long().to(device)
+        #xcdiff includes double flag on net
         self.net =  torch.nn.Sequential(
                 torch.nn.Linear(n_input, n_hidden),
                 torch.nn.GELU(),
@@ -504,10 +568,14 @@ class X_L(torch.nn.Module):
                 torch.nn.Linear(n_hidden, n_hidden),
                 torch.nn.GELU(),
                 torch.nn.Linear(n_hidden, 1),
-            ).to(device)
+            ).double().to(device)
 
+        #to device not declared in xcdiff
         self.tanh = torch.nn.Tanh().to(device)
         self.lobf = LOB(lob).to(device)
+        #below declared in xcdiff
+        self.sig = torch.nn.Sigmoid()
+        self.shift = 1/(1+np.exp(-1e-3))
 
     def forward(self, rho, **kwargs):
         """Forward pass
@@ -525,6 +593,7 @@ class X_L(torch.nn.Module):
                 ueg_lim_a = torch.pow(self.tanh(rho[...,self.use[1]]),2)
             else:
                 ueg_lim_a = 0
+            #below comparison not in xcdiff
             if len(self.use) > 2:
                 ueg_lim_nl = torch.sum(rho[...,self.use[2:]],dim=-1)
             else:

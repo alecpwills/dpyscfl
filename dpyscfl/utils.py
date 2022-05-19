@@ -520,6 +520,10 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
             print("Getting symmetrized grid.")
             mf.grids.coords, mf.grids.weights, L, scaling = get_symmetrized_grid(mol, mf, n_rad, n_ang, method=method)
             features.update({'L': L, 'scaling': scaling})
+            #re-evaluate on grid in case of symmetrization
+            #TODO: Verify this is correct thing to do, hopefully doesn't mess anything up
+            features.update({'ao_eval':mf._numint.eval_ao(mol, mf.grids.coords, deriv=2),
+                        'grid_weights':mf.grids.weights})
         #If net spin or force polarized calculation
         if (mol.spin != 0) or (pol):
             print("Generating spin-channel densities.")
@@ -537,6 +541,16 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
         features.update({'rho':rho})
 
     matrices.update(features)
+
+    print("================================")
+    print("GET DATAPOINT MATRICES SHAPES")
+    for k,v in matrices.items():
+        try:
+            print("{}   ---   {}".format(k, v.shape))
+        except:
+            print("{}   ---   {}, no shape".format(k, v))
+    print("================================")
+
 
     return e_base, np.eye(3), matrices
 

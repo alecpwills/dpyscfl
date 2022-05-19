@@ -534,8 +534,8 @@ class C_L(torch.nn.Module):
             return self.lobf(squeezed*ueg_factor)
         else:
             return squeezed*ueg_factor
-
-class X_L(torch.nn.Module):
+#xcdiff has this named XC_L, not X_L. keep for consistency's sake
+class XC_L(torch.nn.Module):
     def __init__(self, n_input, n_hidden=16, use=[], device='cpu', ueg_limit=False, lob=1.804, one_e=False):
         """Local exchange model based on MLP
         Receives density descriptors in this order : [rho, s, alpha, nl],
@@ -730,6 +730,7 @@ def get_scf(xctype, pretrain_loc='', hyb_par=0, path='', DEVICE='cpu', ueg_limit
         freec (bool, optional): _description_. Defaults to False.
     """
     print('FREEC', freec)
+    X_L = XC_L
     if xctype == 'GGA':
         lob = 1.804 if ueg_limit else 0
         x = X_L(device=DEVICE,n_input=1, n_hidden=16, use=[1], lob=lob, ueg_limit=ueg_limit) # PBE_X
@@ -773,15 +774,17 @@ def get_scf(xctype, pretrain_loc='', hyb_par=0, path='', DEVICE='cpu', ueg_limit
     else:
         #xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, meta_x=meta_x)
         xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level)
-        scf = SCF(nsteps=25, xc=xc, exx=False,alpha=0.3)
-        if inserts:
-            freeze_append_xc(scf, inserts, False)
         if path:
             try:
                 xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
             except AttributeError:
                 # AttributeError: 'RecursiveScriptModule' object has no attribute 'copy'
                 #occurs when loading finished xc from xcdiff
-                xc = torch.jit.load(path)
+                xcp = torch.jit.load(path)
+                xc.load_state_dict(xcp.state_dict())
+        if inserts:
+            freeze_append_xc(scf, inserts, False)
+        scf = SCF(nsteps=25, xc=xc, exx=False,alpha=0.3)
+
     scf.xc.train()
     return scf

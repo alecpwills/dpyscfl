@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+from unittest import skip
 import torch
 torch.set_default_dtype(torch.float)
 torch.autograd.set_detect_anomaly(True)
@@ -67,6 +68,7 @@ parser.add_argument('--gclipnorm', action='store_true', default=False, help='Fla
 parser.add_argument('--gcliphook', action='store_true', default=False, help='Flag only works with gradientclip. If flagged and gclipnorm not, clips norm during backpropagation')
 parser.add_argument('--checkgrad', action='store_true', default=False, help='If flagged, executes loop over scf.xc parameters to print gradients')
 parser.add_argument('--normael', action='store_true', default=False, help='normalize atomization energy loss')
+parser.add_argument('--testmol', type=str, action='store', default='', help='If specified, give symbols/formula/test label for debugging purpose')
 args = parser.parse_args()
 
 ueg_limit = not args.free
@@ -163,17 +165,30 @@ if __name__ == '__main__':
     print(pure_atoms)
     molecules.update(pure_atoms)
     print("PARSING SUPPLEMENTAL NEUTRAL, PURE ATOMS (FROM FRAC DATASET)")
-    n_atoms = {''.join(a.get_chemical_symbols())+'_n0': [idx] for idx, a in enumerate(atoms) if len(a.positions)==1 and a.info.get('supp') and not a.info.get('charge')}
+    n_atoms = {''.join(a.get_chemical_symbols())+'_n0': [idx] for idx, a in enumerate(atoms) if len(a.positions)==1 and a.info.get('supp') and not a.info.get('charge') and not a.info.get('fractional')}
     print(n_atoms)
-    molecules.update(n_atoms)
+    #molecules.update(n_atoms)
     print("PARSING SUPPLEMENTAL CHARGED, PURE ATOMS")
     c_atoms = {''.join(a.get_chemical_symbols())+'_c{}'.format(a.info['charge']): [idx] for idx, a in enumerate(atoms) if len(a.positions)==1 and a.info.get('supp') and a.info.get('charge')}
     print(c_atoms)
-    molecules.update(c_atoms)
+    #molecules.update(c_atoms)
     print("PARSING SUPPLEMENTAL FRACTIONAL ATOMS")
     frac_atoms = {''.join(a.get_chemical_symbols())+'_f{}'.format(a.info['fractional']): [idx] for idx, a in enumerate(atoms) if len(a.positions)==1 and a.info.get('supp') and a.info.get('fractional')}
     print(frac_atoms)
-    molecules.update(frac_atoms)
+    #molecules.update(frac_atoms)
+    def cat_dict(dicts, keysplit='_'):
+        retdct = {k:[] for k in list(dicts[0].keys())}
+        rkeys = sorted(list(retdct.keys()))
+        for didx,dct in enumerate(dicts):
+            dkeys = sorted(list(dct.keys()))
+            for dk in dkeys:
+                mkey = [mk for mk in rkeys if dk.split(keysplit)[0] in mk.split(keysplit)[0]][0]
+                retdct[mkey] += dct[dk]
+        return retdct
+    fracdct = cat_dict([frac_atoms, n_atoms, c_atoms])
+    print("CONCATENATING SUPPLEMENTAL/FRACTIONAL ATOMS")
+    print(frac_atoms)
+    molecules.update(fracdct)
     def split(el):
             import re
             #Splits a string on capital letter sequences
@@ -310,13 +325,15 @@ if __name__ == '__main__':
                 train_order = np.arange(len(molecules)).astype(int)
                 np.random.shuffle(train_order)
                 t = tqdm.tqdm(train_order)
+                fails = []
                 for m_idx in t:
 #                for m_idx in train_order:
                     molecule = list(molecules.keys())[m_idx]
+                    submolecules = [atoms[idx].get_chemical_formula() for idx in molecules[molecule]]
                     print("================================")
                     print('--------------{}----------------'.format(m_idx))
                     print("TRAINING ON MOLECULE: ", molecule)
-                    print("SUBMOLECULES: {}".format([atoms[idx].get_chemical_formula() for idx in molecules[molecule]]))
+                    print("SUBMOLECULES: {}".format(submolecules))
                     print("================================")
                     #if molecule not self-consistent, skip it
                     if not molecules_sc[molecule] and not args.nonsc_weight: continue
@@ -326,6 +343,9 @@ if __name__ == '__main__':
                     #    continue
                     #get molecule to see if skippable
                     m_form = atoms[molecules[molecule][0]].get_chemical_formula()
+                    if args.testmol:
+                        if not ( (args.testmol == m_form) or (args.testmol in molecule) ):
+                            continue
                     if m_form in skips:
                         print("SKIPPING: ", molecule)
                         continue
@@ -370,6 +390,7 @@ if __name__ == '__main__':
                         dm_ref = dm_ref.to(DEVICE)
                         matrices = {key:matrices[key].to(DEVICE) for key in matrices}
                         dm_mix = matrices['dm_realinit']
+                        print("REFERENCE ENERGY: {}".format(e_ref))
                         
                         if args.start_converged:
                             mixing = torch.rand(1)*0
@@ -383,15 +404,33 @@ if __name__ == '__main__':
                             mol_sc = False
                         reaction = atoms[idx].info.get('reaction',False)
                         fractionFlag = atoms[idx].info.get('fractional', False)
-                        if fractionFlag:
+                        suppFlag = atoms[idx].info.get('supp', False)
+                        charge = atoms[idx].info.get('charge', 0)
+                        if suppFlag:
                             print("***************************")
-                            print("FRACTIONAL FLAG SET. f = {}".format(fractionFlag))
+                            print("SUPPLEMENTAL FLAG SET.")
                             print("INDEXED ATOM: {}, {}".format(idx, atoms[idx].get_chemical_formula()))
                             print("***************************")
+                            
+                            if fractionFlag:
+                                print("***************************")
+                                print("FRACTIONAL FLAG SET. f = {}".format(fractionFlag))
+                                print("INDEXED ATOM: {}, {}".format(idx, atoms[idx].get_chemical_formula()))
+                                print("***************************")
+                                ##TODO: implement this in the trajectory, as opposed to post-processing
+                            if suppFlag and not fractionFlag:
+                                #A + B flags
+                                reaction = 'reactant'
+                            elif suppFlag and fractionFlag:
+                                # --> AB
+                                reaction = 2
+
                         #CALCULATION
                         print("SCF CALCULATION")
                         results = scf_wrap(scf, dm_in, matrices, sc, molecule=molecule)
                         if results == None:
+                            fails.append({"Epoch": epoch, 'Training Label':molecule, 'Molecules': [atoms[idx].get_chemical_formula() for idx in molecules[molecule]],
+                        'Current Sub-Molecule': atoms[idx].get_chemical_formula()})
                             break
                         print("E_REF: {}".format(e_ref))
                         print("E_PRED: {}".format(results['E']))
@@ -465,12 +504,23 @@ if __name__ == '__main__':
                             print("REACTION TYPE: REACTANT.")
                             #If self-consistent,
                             if sc:
-                                ref_dict['A'] = e_ref
-                                pred_dict['A'] = results['E'][skip_steps:]
+                                label = 'A' if not 'A' in ref_dict else 'B'
+                                ref_dict[label] = e_ref
+                                pred_dict[label] = results['E'][skip_steps:]
+                                if fractionFlag:
+                                    if charge == 0:                                    
+                                        pred_dict[label] = (1-fractionFlag)*results['E'][skip_steps:]
+                                    elif charge == 1:
+                                        pred_dict[label] = (fractionFlag)*results['E'][skip_steps:]
                             else:
                                 label = 'A' if not 'A' in ref_dict else 'B'
                                 ref_dict[label] = e_ref
                                 pred_dict[label] = results['E'][-1:]
+                                if fractionFlag:
+                                    if charge == 0:                                    
+                                        pred_dict[label] = (1-fractionFlag)*results['E'][-1:]
+                                    elif charge == 1:
+                                        pred_dict[label] = (fractionFlag)*results['E'][-1:]
                         #If not reaction 2, 1, reactant, and molecule has more than one atom, e_ref is reference energy
                         elif len(atoms[idx].positions) > 1:
                             ref_dict[''.join(atoms[idx].get_chemical_symbols())] = e_ref
@@ -537,6 +587,12 @@ if __name__ == '__main__':
                     raise RuntimeError('NaNs could not be resolved by rolling back to checkpoint')
 
         if epoch%PRINT_EVERY==0:
+            print("++++++++++++++++++++++++++++++++++")
+            print("FAILS:")
+            for i in fails:
+                print(i)
+            print("++++++++++++++++++++++++++++++++++")
+
             running_losses = {key:np.sqrt(running_losses[key]/len(molecules))*1000 for key in running_losses}
             total_loss = np.sqrt(total_loss/len(molecules))*1000
             best_loss = min(total_loss, best_loss)

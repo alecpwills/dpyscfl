@@ -689,7 +689,10 @@ def freeze_append_xc(model, n, outputlayergrad):
     cl = [i for i in chil[1].net.children()]
     #Pop the output layer of each net.
     xout = xl.pop()
-    cout = cl.pop()
+    #softplus
+    csout = cl.pop()
+    #gelu
+    cgout = cl.pop()
     #duplicate last layer and GELU
     xl += xl[-2:]*n
     cl += cl[-2:]*n
@@ -702,11 +705,17 @@ def freeze_append_xc(model, n, outputlayergrad):
             par.requires_grad = True
     #Readd output layer.
     xl.append(xout)
-    cl.append(cout)
+    cl.append(cgout)
+    cl.append(csout)
     #If flagged, set output layer to be non-frozen
     if outputlayergrad:
+        #Linear 16 -> 1 output
         for par in xl[-1].parameters():
             par.requires_grad = True
+        #Linear 16 -> 1
+        for par in cl[-2].parameters():
+            par.requires_grad = True
+        #softplus
         for par in cl[-1].parameters():
             par.requires_grad = True
     #Set the new layers as the networks to use.

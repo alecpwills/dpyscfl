@@ -1,4 +1,5 @@
 import numpy as np
+from dpyscfl.scf import energy_tot
 import scipy
 from pyscf import gto, dft, scf , df
 import pylibnxc
@@ -433,12 +434,13 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
 
     if atoms.info.get('openshell',False) and spin ==0:
         spin = 2
-    
+    fractional = atoms.info.get('fractional', None)
+    charge=atoms.info.get('charge', 0)
 
     features = {}
     
-    _, mol = ase_atoms_to_mol(atoms, basis=basis, charge=0, spin=spin)
-    _, mol_ref = ase_atoms_to_mol(atoms, basis=ref_basis, charge=0, spin=spin)
+    _, mol = ase_atoms_to_mol(atoms, basis=basis, charge=charge, spin=spin)
+    _, mol_ref = ase_atoms_to_mol(atoms, basis=ref_basis, charge=charge, spin=spin)
 
     if ml_basis:
         auxmol = ase_atoms_to_mol(atom=atoms,spin=spin, basis=gto.parse(open(ml_basis,'r').read()))
@@ -450,7 +452,7 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
 
     matrices = get_datapoint(mol=mol, mf=mf, dfit=dfit, init_guess=init_guess, do_fcenter=do_fcenter)
 
-    if atoms.info.get('fractional', None):
+    if fractional:
         print("FRACTIONAL FLAG -- CALCULATING CHARGED SYSTEM")
         _, molFrac = ase_atoms_to_mol(atoms, basis=basis, charge=mol.charge+1, spin=None)
         #Must use same method as base atom for shape concerns
@@ -464,21 +466,22 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
         mfFrac.kernel()
         matricesFrac = get_datapoint(mol=molFrac, mf=mfFrac, dfit=dfit, init_guess=init_guess, do_fcenter=do_fcenter)
 
-        matrices = fractional_matrices_combine(matrices, matricesFrac, atoms.info['fractional'])
+        matrices = fractional_matrices_combine(matrices, matricesFrac, fractional)
 
     
 
     dm_init = matrices['dm_init']
     e_base = matrices['e_base']
 
-    if atoms.info.get('fractional', None):
+    if fractional:
+        assert np.isclose(e_base, (1-fractional)*mf.energy_tot()+fractional*mfFrac.energy_tot())
         assert atoms.info['baseRef'], "Atoms flagged as Fractional: Need Neutral Reference Path"
         assert atoms.info['chargeRef'], "Atoms flagged as Fractional: Need Charged Reference Path"
         if atoms.info.get('sc', True) and not atoms.info.get('reaction', False):
             print('Loading reference density')
             dm0_base = np.load(atoms.info['baseRef']+ '/{}_{}.dm.npy'.format(atoms.info['baseidx'], atoms.get_chemical_formula()))
             dmC_base = np.load(atoms.info['chargeRef']+ '/{}_{}.dm.npy'.format(atoms.info['baseidx'], atoms.get_chemical_formula()))
-            dm_base = (1-atoms.info['fractional'])*dm0_base + atoms.info['fractional']*dmC_base
+            dm_base = (1-fractional)*dm0_base + fractional*dmC_base
             print("Reference DM loaded. Shape: {}".format(dm_base.shape))
         if method == dft.UKS and dm_base.ndim == 2:
             dm_base = np.stack([dm_base,dm_base])*0.5
@@ -489,7 +492,8 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
         print("SHAPES: DM_GUESS = {}, DM_BASE = {}".format(dm_guess.shape, dm_init.shape))
         e0_base = read(os.path.join(atoms.info['baseRef'], 'results.traj'), atoms.info['baseidx']).calc.results['energy']
         eC_base = read(os.path.join(atoms.info['chargeRef'], 'results.traj'), atoms.info['baseidx']).calc.results['energy']
-        e_base = (1-atoms.info['fractional'])*e0_base + atoms.info['fractional']*eC_base
+        e_base = (1-fractional)*e0_base + fractional*eC_base
+
     elif ref_path and not atoms.info.get('fractional', None):
         #why do we not use reference here when we still have it?
         #if atoms.info.get('sc', True) and not atoms.info.get('reaction', False):

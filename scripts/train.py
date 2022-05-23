@@ -370,21 +370,14 @@ if __name__ == '__main__':
 
                         print("Calculating sub-atoms in molecule -- ", atoms[idx])
                         if args.print_names: print(atoms[idx])
-                        if atoms[idx].info.get('oldprep', False):
-                            print("Old prep_data.py flagged")
-                            #dm_init, matrices, e_ref, dm_ref = data
-                            dm_init, matrices = data
+                        dm_init = data[0]
+                        matrices = data[1]
+                        try:
+                            e_ref = matrices['e_base']
+                        except KeyError:
+                            print("Wrong key, trying Etot from matrices")
                             e_ref = matrices['Etot']
-                            dm_ref = matrices['dm']
-                        else:
-                            dm_init = data[0]
-                            try:
-                                e_ref = data[1]['e_base']
-                            except KeyError:
-                                print("Wrong key, trying Etot from matrices")
-                                e_ref = data[1]['Etot']
-                            dm_ref = data[1]['dm']
-                            matrices = data[1]
+                        dm_ref = matrices['dm']
                         dm_init = dm_init.to(DEVICE)
                         e_ref = e_ref.to(DEVICE)
                         dm_ref = dm_ref.to(DEVICE)

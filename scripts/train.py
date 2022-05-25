@@ -2,7 +2,6 @@
 # coding: utf-8
 from unittest import skip
 import torch
-torch.set_default_dtype(torch.float)
 torch.autograd.set_detect_anomaly(True)
 import numpy as np
 from ase.io import read
@@ -69,10 +68,17 @@ parser.add_argument('--gcliphook', action='store_true', default=False, help='Fla
 parser.add_argument('--checkgrad', action='store_true', default=False, help='If flagged, executes loop over scf.xc parameters to print gradients')
 parser.add_argument('--normael', action='store_true', default=False, help='normalize atomization energy loss')
 parser.add_argument('--testmol', type=str, action='store', default='', help='If specified, give symbols/formula/test label for debugging purpose')
+parser.add_argument('--torchtype', type=str, default='float', help='float or double')
 args = parser.parse_args()
+
+ttypes = {'float' : torch.float,
+            'double': torch.double}
 
 ueg_limit = not args.free
 HYBRID = (args.hyb_par > 0.0)
+
+
+torch.set_default_dtype(ttypes[args.torchtype])
 
 
 def scf_wrap(scf, dm_in, matrices, sc, molecule=''):

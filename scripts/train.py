@@ -14,6 +14,7 @@ from ase.units import Bohr
 from datetime import datetime
 import os, psutil, tarfile, argparse, json
 import tqdm, inspect
+#from eval import KS, eval_xc, eval_wrap
 old_print = print
 def new_print(*args, **kwargs):
     # if tqdm.tqdm.write raises error, use builtin print

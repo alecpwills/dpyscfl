@@ -173,6 +173,8 @@ def ase_traj_to_mol(traj, basis='6-311++G(3df,2pd)', charge=0, spin=None):
     
     moldct = {}
     for atom in traj:
+        charge = atom.info.get('charge', charge)
+        spin = atom.info.get('spin', spin)
         name, mol = ase_atoms_to_mol(atom, basis, charge, spin)
         moldct[name] = mol
     
@@ -847,4 +849,3 @@ def get_symmetrized_grid(mol, mf, n_rad=20, n_ang=10, print_stat=True, method= h
             return (mf.grids.coords, mf.grids.weights, L, scaling), ((vmunu1, vmunu2)) 
     else:
         return mf.grids.coords, mf.grids.weights, L, scaling
-

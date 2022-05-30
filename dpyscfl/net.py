@@ -754,27 +754,34 @@ def get_scf(xctype, pretrain_loc='', hyb_par=0, path='', DEVICE='cpu', ueg_limit
         print("Loading pre-trained models from " + pretrain_loc)
         x.load_state_dict(torch.load(pretrain_loc + '/x'))
         c.load_state_dict(torch.load(pretrain_loc + '/c'))
-
+    EXX = bool(hyb_par)
+    EXX_A = hyb_par if hyb_par else None
     if hyb_par:
         try:
             a = 1 - hyb_par
             b = 1
             d = hyb_par
             xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level )
-            scf = SCF(nsteps=25, xc=xc, exx=True,alpha=0.3)
+            if path:
+                try:
+                    xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+                except AttributeError:
+                    # AttributeError: 'RecursiveScriptModule' object has no attribute 'copy'
+                    #occurs when loading finished xc from xcdiff
+                    xcp = torch.jit.load(path)
+                    xc.load_state_dict(xcp.state_dict())
 
             xc.add_exx_a(d)
             xc.exx_a.requires_grad=True
+            scf = SCF(nsteps=25, xc=xc, exx=EXX,alpha=0.3)
 
-            if path:
-                xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
 
         except RuntimeError:
             a = 1 - hyb_par
             b = 1
             d = hyb_par
-            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, exx_a=d)
-            scf = SCF(nsteps=25, xc=xc, exx=True,alpha=0.3)
+            xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level, exx_a=EXX_A)
+            scf = SCF(nsteps=25, xc=xc, exx=EXX,alpha=0.3)
             print(xc.exx_a)
             if path:
                 xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
@@ -793,7 +800,8 @@ def get_scf(xctype, pretrain_loc='', hyb_par=0, path='', DEVICE='cpu', ueg_limit
                 xc.load_state_dict(xcp.state_dict())
         if inserts:
             freeze_append_xc(scf, inserts, False)
-        scf = SCF(nsteps=25, xc=xc, exx=False,alpha=0.3)
-
+        scf = SCF(nsteps=25, xc=xc, exx=EXX,alpha=0.3)
+        if hyb_par:
+            xc.add_exx_a(hyb_par)
     scf.xc.train()
     return scf

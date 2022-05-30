@@ -229,11 +229,11 @@ if __name__ == '__main__':
     best_loss = 1e6
     print("GENERATING SCF OBJECT")
     if args.pretrain_loc:
-        scf = get_scf(args.type, pretrain_loc=args.pretrain_loc)
+        scf = get_scf(args.type, pretrain_loc=args.pretrain_loc, hyb_par=args.hyb_par)
     elif args.modelpath:
-        scf = get_scf(args.type, path=args.modelpath, inserts=args.loadfa)
+        scf = get_scf(args.type, path=args.modelpath, inserts=args.loadfa, hyb_par=args.hyb_par)
     else:
-        scf = get_scf(args.type)
+        scf = get_scf(args.type, hyb_par=args.hyb_par)
     scf.nsteps = args.scf_steps
 
     if args.freezeappend:

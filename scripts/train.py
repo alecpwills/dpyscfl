@@ -610,7 +610,7 @@ if __name__ == '__main__':
             print('Epoch {} ||'.format(epoch), [' {} : {:.6f}'.format(key,val) for key, val in running_losses.items()],
                   '|| total loss {:.6f}'.format(total_loss),chkpt_str)
             if HYBRID:
-                print(scf.xc.exx_a)
+                print("HYB MIXING: ", scf.xc.exx_a)
             print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
             print("============================================================")
 

@@ -258,6 +258,7 @@ def atomization_energies(energies):
             e_tot = np.array(energies[key])
             e_tot_size = e_tot.shape
         for symbol in split(key):
+            #if single atom, continue
             if len(split(key)) == 1: continue
             e_sub = energies[symbol]
             e_sub_size = e_sub.size() if isinstance(e_sub, torch.Tensor) else e_sub.shape

@@ -63,11 +63,7 @@ parser.add_argument('--forcedensloss', action='store_true', default=False, help=
 parser.add_argument('--freezeappend',  type=int, action='store', default=0, help='If flagged, freezes network and adds N duplicate layers between output layer and last hidden layer. The new layer is not frozen.')
 parser.add_argument('--loadfa', type=int, action='store', default=0, help='If loading model that has appended layers, specify number of inserts between previous final and output layers here.')
 parser.add_argument('--outputlayergrad', action='store_true', default=False, help='Only works with freezeappend. If flagged, sets the output layer to also be differentiable.')
-parser.add_argument('--gradientclip', action='store', type=float, default=0, help='If set, clips gradient so no explosions in backpropagation')
-parser.add_argument('--gclipnorm', action='store_true', default=False, help='Flag only works with gradientclip. If flagged and gcliphook not, clips norm after completion of backpropagation')
-parser.add_argument('--gcliphook', action='store_true', default=False, help='Flag only works with gradientclip. If flagged and gclipnorm not, clips norm during backpropagation')
 parser.add_argument('--checkgrad', action='store_true', default=False, help='If flagged, executes loop over scf.xc parameters to print gradients')
-parser.add_argument('--normael', action='store_true', default=False, help='normalize atomization energy loss')
 parser.add_argument('--testmol', type=str, action='store', default='', help='If specified, give symbols/formula/test label for debugging purpose')
 parser.add_argument('--torchtype', type=str, default='float', help='float or double')
 args = parser.parse_args()
@@ -89,7 +85,7 @@ def scf_wrap(scf, dm_in, matrices, sc, molecule=''):
         print("========================================================")
         print("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
         print("SCF CALCULATION FAILED")
-        print("SCF Calculation failed for {}, likely eigen-decomposition".format(molecule))
+        print("SCF Calculation failed for {}".format(molecule))
         print("{}".format(e))
         print("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
         print("========================================================")
@@ -138,6 +134,7 @@ if __name__ == '__main__':
         #tar.add(source_dir, arcname=os.path.basename(source_dir))
         source_dir = __file__
         tar.add(source_dir, arcname=os.path.basename(source_dir))
+
     print("READING REFERENCE TRAJECTORY.")
     atoms = read(args.reftraj, ':')
     indices = np.arange(len(atoms)).tolist()
@@ -145,21 +142,17 @@ if __name__ == '__main__':
     #But don't pop them, because indexing important.
     #skips = ['O2', 'Cl2', 'HCl']
     skips = ['O2']
-
-    #Validation Molecules
-    #valats = read(args.valtraj, ':')
-    #valsys = [103, 14, 23, 5, 10, 79, 27, 105] #Validation
-
-
+    
     pop = []
-    print("popping specified atoms: {}".format(pop))
-    [atoms.pop(i) for i in pop]
-    [indices.pop(i) for i in pop]
+    #print("popping specified atoms: {}".format(pop))
+    #[atoms.pop(i) for i in pop]
+    #[indices.pop(i) for i in pop]
 
 
     print("READING DATASET")
     dataset = MemDatasetRead(args.datapath, skip=pop)
     dataset_train = dataset
+
     print("LOADING DATASET INTO PYTORCH")
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False) # Dont change batch size !
     dataloader_train = torch.utils.data.DataLoader(dataset_train, batch_size=1, shuffle=False) # Dont change batch size !
@@ -167,23 +160,29 @@ if __name__ == '__main__':
     print("PARSING NON-ATOMIC NON-REACTION MOLECULES")
     molecules = {'{:3d}'.format(idx) + ''.join(a.get_chemical_symbols()): [idx] for idx, a in enumerate(atoms) if len(a.positions) > 1 and not a.info.get('reaction') }
     print(molecules)
+
     print("PARSING NEUTRAL, PURE NON-REACTION ATOMS. CHARGE FLAG NOT SET.")
     pure_atoms = {''.join(a.get_chemical_symbols()): [idx] for idx, a in enumerate(atoms) if len(a.positions) == 1 and not a.info.get('reaction') and not a.info.get('fractional') and not a.info.get('charge') and not a.info.get('supp')}
     print(pure_atoms)
     molecules.update(pure_atoms)
+    
     print("PARSING SUPPLEMENTAL NEUTRAL, PURE ATOMS (FROM FRAC DATASET)")
     n_atoms = {''.join(a.get_chemical_symbols())+'_n0': [idx] for idx, a in enumerate(atoms) if len(a.positions)==1 and a.info.get('supp') and not a.info.get('charge') and not a.info.get('fractional')}
     print(n_atoms)
+
     #molecules.update(n_atoms)
     print("PARSING SUPPLEMENTAL CHARGED, PURE ATOMS")
     c_atoms = {''.join(a.get_chemical_symbols())+'_c{}'.format(a.info['charge']): [idx] for idx, a in enumerate(atoms) if len(a.positions)==1 and a.info.get('supp') and a.info.get('charge')}
     print(c_atoms)
+
     #molecules.update(c_atoms)
     print("PARSING SUPPLEMENTAL FRACTIONAL ATOMS")
     frac_atoms = {''.join(a.get_chemical_symbols())+'_f{}'.format(a.info['fractional']): [idx] for idx, a in enumerate(atoms) if len(a.positions)==1 and a.info.get('supp') and a.info.get('fractional')}
     print(frac_atoms)
     #molecules.update(frac_atoms)
+    
     def cat_dict(dicts, keysplit='_'):
+        #To generate the list of atoms comprising a fractional datapoint, for effective reaction
         retdct = {k:[] for k in list(dicts[0].keys())}
         rkeys = sorted(list(retdct.keys()))
         for didx,dct in enumerate(dicts):
@@ -192,10 +191,12 @@ if __name__ == '__main__':
                 mkey = [mk for mk in rkeys if dk.split(keysplit)[0] in mk.split(keysplit)[0]][0]
                 retdct[mkey] += dct[dk]
         return retdct
+
     fracdct = cat_dict([frac_atoms, n_atoms, c_atoms])
     print("CONCATENATING SUPPLEMENTAL/FRACTIONAL ATOMS")
     print(frac_atoms)
     molecules.update(fracdct)
+
     def split(el):
             import re
             #Splits a string on capital letter sequences
@@ -210,8 +211,10 @@ if __name__ == '__main__':
         for a in split(molecule[3:]):
             comp.append(pure_atoms[a][0])
         molecules[molecule] += comp
-    a_count = {idx: len(at.positions) for idx,at in enumerate(atoms)}
-    #a_count = {a: np.sum([a in molecules[mol] for mol in molecules]) for a in np.unique([m  for mol in molecules for m in molecules[mol]])}
+
+    #a_count = {idx: len(at.positions) for idx,at in enumerate(atoms)}
+    a_count = {a: np.sum([a in molecules[mol] for mol in molecules]) for a in np.unique([m  for mol in molecules for m in molecules[mol]])}
+    
     print("PARSING REACTIONS")
     reactions = {}
     for idx, a in enumerate(atoms):
@@ -223,6 +226,7 @@ if __name__ == '__main__':
             [idx] + [idx + i for i in np.arange(-a.info.get('reaction'),0,1).astype(int)]
     print(reactions)
     molecules.update(reactions)
+
     print("MOLECULES TO TRAIN ON")
     print(molecules)
 
@@ -242,13 +246,7 @@ if __name__ == '__main__':
         print("\n ================================= \n")
         freeze_append_xc(scf, args.freezeappend, args.outputlayergrad)
 
-    if args.gradientclip and args.gcliphook and not args.gclipnorm:
-        print("Registering Backward Hook to Clip Gradient")
-        for p in scf.xc.parameters():
-            p.register_hook(lambda grad: torch.clamp(grad, -args.gradientclip, args.gradientclip))
-
     if args.testrun:
-        #TODO: fix this, dataloader doesn't have dm_ref
         print("\n ======= Starting testrun ====== \n\n")
         #Set SCF Object training flag off
         scf.xc.evaluate()
@@ -256,6 +254,7 @@ if __name__ == '__main__':
         Es = []
         E_pretrained = []
         cnt = 0
+        #TODO: fix how things are loaded to use testrun
         for dm_init, matrices, e_ref, dm_ref in dataloader_train:
             e_ref = matrices['e_base']
             dm_ref = matrices['dm']
@@ -292,6 +291,7 @@ if __name__ == '__main__':
     optimizer, scheduler = get_optimizer(scf, path=args.optimpath)
 
     AE_mult = 1
+
     #Loss Functions -- Density
     density_loss = rho_alt_loss if args.rho_alt else rho_loss
     # args.rho_weight defaults to 20, per the paper
@@ -333,6 +333,7 @@ if __name__ == '__main__':
                 np.random.shuffle(train_order)
                 t = tqdm.tqdm(train_order)
                 fails = []
+                #loop over tqdm object for shell progress bar
                 for m_idx in t:
 #                for m_idx in train_order:
                     molecule = list(molecules.keys())[m_idx]
@@ -342,13 +343,9 @@ if __name__ == '__main__':
                     print("TRAINING ON MOLECULE: ", molecule)
                     print("SUBMOLECULES: {}".format(submolecules))
                     print("================================")
-                    #if molecule not self-consistent, skip it
+                    #if molecule not self-consistent and the weight associated to nonsc molecules is 0, skip it
                     if not molecules_sc[molecule] and not args.nonsc_weight: continue
-                    #34HONN, HN2O frequently causes network weights to evaluate to NaN. Skip for now
-                    #if ('34HONN' or '43HFF') in molecule:
-                    #    print("SKIPPING: ", molecule)
-                    #    continue
-                    #get molecule to see if skippable
+                    
                     m_form = atoms[molecules[molecule][0]].get_chemical_formula()
                     if args.testmol:
                         if not ( (args.testmol == m_form) or (args.testmol in molecule) ):
@@ -360,6 +357,8 @@ if __name__ == '__main__':
                     ref_dict = {}
                     pred_dict = {}
                     loss = 0
+                    #subset Dataset so that we don't have to load unnecessary data during one molecule step
+                    #previously, this looped over the entire Dataset and matched indices contained in molecule list
                     print("Subsetting Dataset with molecules[{}]: ".format(molecule), molecules[molecule])
                     subset = torch.utils.data.Subset(dataset, molecules[molecule])
                     subset_loader = torch.utils.data.DataLoader(subset, batch_size=1, shuffle=False)
@@ -368,22 +367,24 @@ if __name__ == '__main__':
                         idx = molecules[molecule][didx]
                         if idx == 0:
                             print(idx, data[1].keys())
-                        #If the index in the data is not the index of the molecule chosen by m_idx, continue
-                        #if idx not in molecules[molecule]:
-                        #    print("Sub-index {} not in ".format(idx), molecules[molecule])
-                        #    continue
+                        #modify loading bar for descriptive progress during training
                         t.set_postfix({"Epoch": epoch, 'Training Label':molecule, 'Molecules': [atoms[idx].get_chemical_formula() for idx in molecules[molecule]],
                         'Current Sub-Molecule': atoms[idx].get_chemical_formula()})
 
                         print("Calculating sub-atoms in molecule -- ", atoms[idx])
                         if args.print_names: print(atoms[idx])
+                        #xcdiff version saved as dm_init, matrices, e_ref, dm_ref,
+                        #but everything after dm_init contained in matrices now
                         dm_init = data[0]
                         matrices = data[1]
                         try:
+                            #previous prep_data had different keys for the matrix values
                             e_ref = matrices['e_base']
                         except KeyError:
                             print("Wrong key, trying Etot from matrices")
                             e_ref = matrices['Etot']
+
+                        #get ref dm, send extracted values to device
                         dm_ref = matrices['dm']
                         dm_init = dm_init.to(DEVICE)
                         e_ref = e_ref.to(DEVICE)
@@ -392,16 +393,21 @@ if __name__ == '__main__':
                         dm_mix = matrices['dm_realinit']
                         print("REFERENCE ENERGY: {}".format(e_ref))
                         
+                        #if converged, don't mix dm's
                         if args.start_converged:
                             mixing = torch.rand(1)*0
                         else:
                             mixing = torch.rand(1)/2 + 0.5
                         sc = atoms[idx].info.get('sc',True)
+
+                        #mix dms if not converged/if sc
                         if sc:
                             dm_in = dm_init*(1-mixing) + dm_mix*mixing
                         else:
                             dm_in = dm_init
                             mol_sc = False
+
+                        #get flags to determine loss -- reaction, fractional, supplemental, charge
                         reaction = atoms[idx].info.get('reaction',False)
                         fractionFlag = atoms[idx].info.get('fractional', False)
                         suppFlag = atoms[idx].info.get('supp', False)
@@ -420,15 +426,18 @@ if __name__ == '__main__':
                                 ##TODO: implement this in the trajectory, as opposed to post-processing
                             if suppFlag and not fractionFlag:
                                 #A + B flags
+                                #atom flagged as supplemental to dataset, but is not the fractionally mixed atom
                                 reaction = 'reactant'
                             elif suppFlag and fractionFlag:
                                 # --> AB
+                                #fractionally mixed, end result of A+B->AB, so 2
                                 reaction = 2
 
                         #CALCULATION
                         print("SCF CALCULATION")
                         results = scf_wrap(scf, dm_in, matrices, sc, molecule=molecule)
                         if results == None:
+                            #failed calculation, break out of this molecule's loop and continue with next
                             fails.append({"Epoch": epoch, 'Training Label':molecule, 'Molecules': [atoms[idx].get_chemical_formula() for idx in molecules[molecule]],
                         'Current Sub-Molecule': atoms[idx].get_chemical_formula()})
                             break
@@ -451,9 +460,11 @@ if __name__ == '__main__':
                         print("RESULTS MATRICES SHAPES")
                         for k,v in results.items():
                             if k == 'fcenter':
+                                #chance this isn't in matrices, so None in results, so just skip
                                 continue
                             print("{}   ---   {}".format(k, v.shape))
                         print("================================")
+
                         #If radical, multiplicative factor
                         if atoms[idx].info.get('radical', False):
                             results['rho'] *= args.radical_factor
@@ -473,10 +484,11 @@ if __name__ == '__main__':
                         #Else empty loss dict
                         else:
                             losses = {}
-                        #if choose to force density loss,
+                        #if choose to force density loss, h_losses contains e_loss and rho_loss
                         if args.forcedensloss:
                             print("FORCED DENSITY LOSS")
                             losses = h_losses
+
                         #For each key in whichever loss dict chosen,
                         #Select the function (it's a tuple of itself), feed in results dict, normalize by number of atoms
                         losses_eval = {key: losses[key][0](results)/a_count[idx] for key in losses}
@@ -489,10 +501,13 @@ if __name__ == '__main__':
                         if reaction == 2:
                             print("REACTION TYPE: 2. A+B -> AB")
                             ref_dict['AB'] = e_ref
+                            #if sc, get last skip_steps of scf cycle energies
+                            #otherwise, get energy as list
                             if sc:
                                 pred_dict['AB'] = results['E'][skip_steps:]
                             else:
                                 pred_dict['AB'] = results['E'][-1:]
+
                         #ELSE if Reaction type is 1, it is an A->A reaction with some charge difference,
                         #Typically, reactant is charged so reaction == 1 is neutral
                         elif reaction == 1:
@@ -508,6 +523,7 @@ if __name__ == '__main__':
                                 ref_dict[label] = e_ref
                                 pred_dict[label] = results['E'][skip_steps:]
                                 if fractionFlag:
+                                    #Efract = (1-f)*En + f*Ec
                                     if charge == 0:                                    
                                         pred_dict[label] = (1-fractionFlag)*results['E'][skip_steps:]
                                     elif charge == 1:
@@ -521,6 +537,7 @@ if __name__ == '__main__':
                                         pred_dict[label] = (1-fractionFlag)*results['E'][-1:]
                                     elif charge == 1:
                                         pred_dict[label] = (fractionFlag)*results['E'][-1:]
+                        
                         #If not reaction 2, 1, reactant, and molecule has more than one atom, e_ref is reference energy
                         elif len(atoms[idx].positions) > 1:
                             ref_dict[''.join(atoms[idx].get_chemical_symbols())] = e_ref
@@ -529,7 +546,7 @@ if __name__ == '__main__':
                             else:
                                 steps = -1    
                             pred_dict[''.join(atoms[idx].get_chemical_symbols())] = results['E'][steps:]
-                        
+                        #Else if not reaction 2, 1, reactant, and is single atom, ref_en if e_ref
                         else:
                             #ref_dict[''.join(atoms[idx].get_chemical_symbols())] = torch.zeros_like(e_ref)
                             ref_dict[''.join(atoms[idx].get_chemical_symbols())] = e_ref
@@ -538,13 +555,11 @@ if __name__ == '__main__':
                         print(loss)
                     if not results:
                         continue
+                    
                     print("LOOP OVER SUBMOLECULES COMPLETED")
                     print("REF_DICT: ", ref_dict)
                     print("PRED_DICT: ", pred_dict)
                     ael = ae_loss(ref_dict,pred_dict)
-                    if args.normael:
-                        print("Normalizing AEL")
-                        ael = torch.log(ael)
                     running_losses['ae'] += ael.item()
                     print('predict dict', pred_dict)
                     print('ref dict', ref_dict)
@@ -556,19 +571,16 @@ if __name__ == '__main__':
                         loss += args.nonsc_weight * ael
                         running_losses['ae'] += args.nonsc_weight * ael.item()
                     total_loss += loss.item()
-                    print("Zeroing Optimizer Grad")
-                    optimizer.zero_grad()
                     print("Backward Propagation")
                     loss.backward()
                     if args.checkgrad:
                         for p in scf.xc.parameters():
                             if p.requires_grad:
                                 print('===========\ngradient\n----------\nmax: {}\nmin: {}'.format(torch.max(p.grad), torch.min(p.grad)))
-                    if args.gradientclip and args.gclipnorm and not args.gcliphook:
-                        print("Clipping Norm With Clip Gradient")
-                        torch.nn.utils.clip_grad_norm_(scf.xc.parameters(), args.gradientclip)
                     print("Step Optimizer")
                     optimizer.step()
+                    print("Zeroing Optimizer Grad")
+                    optimizer.zero_grad()
             except RuntimeError:
                 encountered_nan = True
                 chkpt_idx -= 1
@@ -610,7 +622,8 @@ if __name__ == '__main__':
             print('Epoch {} ||'.format(epoch), [' {} : {:.6f}'.format(key,val) for key, val in running_losses.items()],
                   '|| total loss {:.6f}'.format(total_loss),chkpt_str)
             if HYBRID:
-                print("HYB MIXING: ", scf.xc.exx_a)
+                print("HYB MIXING:")
+                print(scf.xc.exx_a)
             print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
             print("============================================================")
 

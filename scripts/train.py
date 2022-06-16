@@ -255,8 +255,14 @@ if __name__ == '__main__':
         E_pretrained = []
         cnt = 0
         #TODO: fix how things are loaded to use testrun
-        for dm_init, matrices, e_ref, dm_ref in dataloader_train:
-            e_ref = matrices['e_base']
+        #for dm_init, matrices, e_ref, dm_ref in dataloader_train:
+        for dm_init, matrices in dataloader_train:
+            try:
+                #previous prep_data had different keys for the matrix values
+                e_ref = matrices['e_base']
+            except KeyError:
+                print("Wrong key, trying Etot from matrices")
+                e_ref = matrices['Etot']
             dm_ref = matrices['dm']
             print(atoms[cnt])
             sc = atoms[cnt].info.get('sc',True)

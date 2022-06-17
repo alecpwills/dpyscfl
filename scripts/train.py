@@ -250,13 +250,21 @@ if __name__ == '__main__':
         print("\n ======= Starting testrun ====== \n\n")
         #Set SCF Object training flag off
         scf.xc.evaluate()
-#         scf.xc.train()
+
         Es = []
         E_pretrained = []
         cnt = 0
         #TODO: fix how things are loaded to use testrun
         #for dm_init, matrices, e_ref, dm_ref in dataloader_train:
-        for dm_init, matrices in dataloader_train:
+        #for dm_init, matrices in dataloader_train:
+        for tridx, data in enumerate(dataloader_train):
+            atom = atoms[tridx]
+            if ( (atom.get_chemical_formula() in skips) or (atom.symbols in skips) ):
+                print("skipping {}".format(atom.get_chemical_formula()))
+                continue
+            dm_init = data[0]
+            matrices = data[1]
+            
             try:
                 #previous prep_data had different keys for the matrix values
                 e_ref = matrices['e_base']
@@ -273,9 +281,12 @@ if __name__ == '__main__':
             e_ref = e_ref.to(DEVICE)
             dm_ref = dm_ref.to(DEVICE)
             matrices = {key:matrices[key].to(DEVICE) for key in matrices}
+
+            results = scf_wrap(scf, matrices['dm_realinit'], matrices, sc, molecule='testrun_{}'.format(tridx))
+            if not results:
+                continue
+
             E_pretrained.append(matrices['e_pretrained'])
-     
-            results = scf.forward(matrices['dm_realinit'], matrices, sc)
             E = results['E']
 
             if sc:

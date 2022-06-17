@@ -259,7 +259,12 @@ if __name__ == '__main__':
         #for dm_init, matrices in dataloader_train:
         for tridx, data in enumerate(dataloader_train):
             atom = atoms[tridx]
-            if ( (atom.get_chemical_formula() in skips) or (atom.symbols in skips) ):
+            cf, cs = (atom.get_chemical_formula(), str(atom.symbols))
+            print("====================================")
+            print("Testrun Calculation")
+            print(tridx, atom, cf, cs)
+            print("====================================")
+            if ( (cf in skips) or (cs in skips) ):
                 print("skipping {}".format(atom.get_chemical_formula()))
                 continue
             dm_init = data[0]

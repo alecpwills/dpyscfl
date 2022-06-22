@@ -279,7 +279,7 @@ if __name__ == '__main__':
             sc = atom.info.get('sc',True)
 
             #If atom not self-consistent, skip
-            #if not sc: continue 
+            if not sc: continue 
             dm_init = dm_init.to(DEVICE)
             e_ref = e_ref.to(DEVICE)
             dm_ref = dm_ref.to(DEVICE)
@@ -313,8 +313,8 @@ if __name__ == '__main__':
                 atom = atoms[i]
                 sc = atom.info.get('sc', True)
                 cf, cs = (atom.get_chemical_formula(), str(atom.symbols))
-                #if not sc:
-                #    print('non-sc atom {}, skipping')
+                if not sc:
+                    print('non-sc atom {}, skipping')
                 if ( (cf in skips) or (cs in skips) ):
                     print("write test: skipping {}".format(atom.get_chemical_formula()))
                     continue

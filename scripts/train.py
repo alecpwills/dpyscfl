@@ -279,7 +279,7 @@ if __name__ == '__main__':
             sc = atom.info.get('sc',True)
 
             #If atom not self-consistent, skip
-            if not sc: continue 
+            #if not sc: continue 
             dm_init = dm_init.to(DEVICE)
             e_ref = e_ref.to(DEVICE)
             dm_ref = dm_ref.to(DEVICE)
@@ -306,17 +306,20 @@ if __name__ == '__main__':
         print(str(convergence), 'Convergence')
 
         with open(logpath+'testrun.dat', 'w') as f:
-            f.write('#IDX FORMULA SYMBOLS E_PRETRAINED_MODEL E_DFT_BASELINE E_ERROR CONVERGENCE')
+            f.write('#IDX FORMULA SYMBOLS E_PRETRAINED_MODEL E_DFT_BASELINE E_ERROR CONVERGENCE SC\n')
 
             testwritei = 0
             for i in range(len(atoms)):
                 atom = atoms[i]
+                sc = atom.info.get('sc', True)
                 cf, cs = (atom.get_chemical_formula(), str(atom.symbols))
+                #if not sc:
+                #    print('non-sc atom {}, skipping')
                 if ( (cf in skips) or (cs in skips) ):
                     print("write test: skipping {}".format(atom.get_chemical_formula()))
                     continue
-                f.write('{} {} {} {} {} {} {}\n'.format(testwritei, cf, cs, e_premodel[testwritei],
-                E_pretrained[testwritei], error_pretrain[testwritei], convergence[testwritei]))
+                f.write('{} {} {} {} {} {} {} {}\n'.format(testwritei, cf, cs, e_premodel[testwritei],
+                E_pretrained[testwritei], error_pretrain[testwritei], convergence[testwritei], sc))
                 testwritei += 1
 
             

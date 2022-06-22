@@ -491,10 +491,11 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
             dm_base = np.sum(dm_base, axis=0)
         dm_guess = dm_init
         dm_init = dm_base
-        print("SHAPES: DM_GUESS = {}, DM_BASE = {}".format(dm_guess.shape, dm_init.shape))
+        print("FRACTIONAL SHAPES: DM_GUESS = {}, DM_BASE = {}".format(dm_guess.shape, dm_init.shape))
         e0_base = read(os.path.join(atoms.info['baseRef'], 'results.traj'), atoms.info['baseidx']).calc.results['energy']
         eC_base = read(os.path.join(atoms.info['chargeRef'], 'results.traj'), atoms.info['baseidx']).calc.results['energy']
         e_base = (1-fractional)*e0_base + fractional*eC_base
+        features.update({'dm':dm_base, 'dm_init':dm_guess, 'e_base':e_base})
 
     elif ref_path and not atoms.info.get('fractional', None):
         #why do we not use reference here when we still have it?
@@ -509,10 +510,11 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
             dm_base = np.sum(dm_base, axis=0)
         dm_guess = dm_init
         dm_init = dm_base
-        print("SHAPES: DM_GUESS = {}, DM_BASE = {}".format(dm_guess.shape, dm_init.shape))
+        print("REF, NONFRAC SHAPES: DM_GUESS = {}, DM_BASE = {}".format(dm_guess.shape, dm_init.shape))
         #TODO: Amend the way this is done
         e_base = read(os.path.join(ref_path, 'results.traj'), ref_index).calc.results['energy']
         #e_base =  (pd.read_csv(ref_path + '/energies', delim_whitespace=True,header=None,index_col=0).loc[ref_index]).values.flatten()[0]
+        features.update({'dm':dm_base, 'dm_init':dm_guess, 'e_base':e_base})
 
     if grid_level:
         print("GRID GENERATION.")

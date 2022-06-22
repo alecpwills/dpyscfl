@@ -56,6 +56,10 @@ if __name__ == '__main__':
                                 ref_path=args.ref_path, ref_index= idx,ref_basis='6-311++G(3df,2pd)', dfit=args.dfit) for idx, d in zip(indices, atoms)]
 
         E_base =  [r[0] for r in baseline]
+        with open('e_base.dat', 'w') as f:
+            f.write("#IDX ATOM E_BASE")
+            for i,at in enumerate(atoms):
+                f.write('{} {} {}'.format(i, at.get_chemical_formula(), E_base[i]))
         DM_base = [r[1] for r in baseline]
         inputs = [r[2] for r in baseline]
         inputs = {key: [i.get(key,None) for i in inputs] for key in inputs[0]}

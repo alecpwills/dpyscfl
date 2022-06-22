@@ -1,149 +1,149 @@
-xyz_idx,Formula,Name,E
-67,AlCl3,Aluminum trichloride,1310.7
-41,AlF3,Aluminum trifluoride,1807.99
-61,BCl3,Boron trichloride,1359.87
-133,BF3,Boron trifluoride,1972.3
-14,BeH,Beryllium monohydride,212.5
-36,CCl4,Tetrachloromethane,1318.96
-9,CF4,Tetrafluoromethane,2005.71
-108,CH,Methylidyne radical,351.6
-146,CH2Cl2,Dichloromethane,1554.42
-62,CH2F2,Difluoromethane,1832.86
-53,CH2O2,Formic acid,2100.94
-42,CH2O,Formaldehyde,1567.43
-105,CH2,Singlet carbene,757.45
-106,CH2,Triplet carbene,797.23
-64,CH3Cl,Chloromethane,1656.17
-116,CH3,Methyl radical,1287.21
-68,CH3O,Hydroxymethyl radical,1715.47
-37,CH3O,Methoxy radical,1674.66
-38,CH3S,Methylthio radical,1601.03
-10,CH4,Methane,1757.82
-124,CH4O,Methanol,2147.84
-65,CH4S,Thiomethanol,1987.63
-66,CHCl3,Trichloromethane,1444.48
-39,CHF3,Trifluoromethane,1924.71
-19,CHO,Formyl radical,1169.59
-141,CN,Cyano radical,758.56
-18,CNH,Hydrogen cyanide,1310.97
-137,CNH3O2,Methyl nitrite,2507.94
-96,CNH3O2,Nitromethane,2518.4
-87,CNH5,Methylamine,2434.89
-134,C2Cl4,Tetrachloroethylene,1976.57
-123,C2F4,Tetrafluoroethylene,2470.91
-8,C2H,Ethynyl radical,1112.08
-101,C2H2,Acetylene,1695.79
-139,C2H2O2,Glyoxal,2657.71
-77,C2H2O,Ketene,2232.05
-143,C2H3Cl,Vinyl chloride,2276.5
-34,C2H3,Vinyl radical,1864.92
-102,C2H3F,Vinyl fluoride,2400.61
-63,C2H3O,Carbonyl methane,2436.67
-140,C2H3OCl,Acetyl chloride,2798.87
-100,C2H3OF,Acetyl fluoride,2957.91
-54,C2H4,Ethylene,2358.75
-79,C2H4O2,Acetic acid,3363.76
-85,C2H4O2,Methyl formate,3292.61
-81,C2H4O,Acetaldehyde,2835.43
-82,C2H4O,Oxirane,2725.51
-95,C2H4S,Thiirane,2620.57
-104,C2H5Cl,Ethyl chloride,2897.6
-35,C2H5,Ethyl radical,2526.01
-126,C2H5O,Ethoxy radical,2919.13
-59,C2H6,Ethane,2981.64
-147,C2H6O,Dimethyl ether,3341.56
-119,C2H6O,Ethanol,3392.98
-57,C2H6OS,Dimethyl sulfoxide,3587.65
-127,C2H6S,Dimethyl sulfide,3217.58
-73,C2H6S,Thioethanol,3222.3
-103,C2N2,Cyanogen,2100.2
-60,C2NF3,Trifluoroacetonitril,2688.27
-145,C2NH3,Acetonitrile,2578.87
-128,C2NH5,Aziridine,3012.94
-98,C2NH5O,Acetamide,3633.73
-120,C2NH7,Dimethylamine,3640.55
-142,C2NH7,Ethylamine,3674.87
-33,C3H4,Allene,2944.45
-112,C3H4,Cyclopropene,2852.25
-91,C3H4,Propyne,2950.5
-111,C3H6,Cyclopropane,3571.3
-138,C3H6O,Acetone,4097.39
-90,C3H6,Propene,3602.67
-51,C3H7Cl,1-Chloropropane,4130.72
-97,C3H7,Isopropyl radical,3769.88
-70,C3H8O,Methoxyethane,4587.12
-131,C3H8O,Isopropyl alcohol,4641.05
-89,C3H8,Propane,4214.27
-130,C3NH3,Acrylonitrile,3191.46
-118,C3NH9,Trimethylamine,4857.95
-135,C4H10,Isobutane,5453.18
-78,C4H10,n-Butane,5447.22
-69,C4H4O,Furan,4164.49
-132,C4H4S,Thiophene,4038.49
-125,C4H6,"1,3-Butadiene",4237.73
-86,C4H6,2-Butyne,4201.18
-129,C4H6,Bicyclo[1.1.0]butane,4125.62
-56,C4H6,Cyclobutene,4189.71
-92,C4H6,Methylenecyclopropane,4154.81
-55,C4H8,Cyclobutane,4811.19
-136,C4H8,Isobutene,4849.73
-76,C4H9,tert-Butyl radical,5016.63
-99,C4NH5,Pyrrole,4488.94
-32,C5H8,Spiropentane,5376.77
-109,C5NH5,Pyridine,5183.94
-71,C6H6,Benzene,5727.81
-17,Cl2,Dichlorine,248.22
-0,CO,Carbon monoxide,1087.57
-11,CO2,Carbon dioxide,1633.95
-40,COF2,Carbonyl fluoride,1762.1
-72,COS,Carbonyl sulfide,1406.74
-1,CS,Carbon monosulfide,719.47
-12,CS2,Carbon disulfide,1174.07
-80,FCl,Chlorine monofluoride,262.43
-114,F2,Difluorine,162.31
-44,F3Cl,Chlorine trifluoride,537.44
-20,HCl,Hydrogen chloride,449.58
-3,HF,Hydrogen fluoride,593.02
-46,HOCl,Hypochlorous acid,695.38
-107,HO,Hydroxyl radical,448.3
-6,HS,Mercapto radical,366.55
-2,H2,Dihydrogen,457.73
-43,H2O2,Hydrogen peroxide,1126.34
-15,H2O,Water,974.94
-16,H2S,Hydrogen sulfide,768.72
-25,LiF,Lithium fluoride,583.99
-26,LiH,Lithium hydride,242.27
-24,Li2,Dilithium,101.24
-29,Na2,Disodium,71.78
-47,NaCl,Sodium chloride,412.96
-22,NF3,Trifluoroamine,863.68
-122,NH2,Amino radical,762.95
-58,NH3,Ammonia,1245.99
-84,NH,Imidogen,347.02
-23,NO2,Nitrogen dioxide,954.1
-45,NOCl,Nitrosyl chloride,803.43
-83,NO,Nitric oxide,639.28
-113,N2,Dinitrogen,955.82
-52,N2H4,Hydrazine,1832.69
-21,N2O,Nitrous oxide,1133.7
-88,OCl,Monochlorine monoxide,271.2
-13,OF2,Difluorine monoxide,392.68
-7,OS,Sulfur monoxide,528.72
-121,O2,Dioxygen,505.88
-30,O2S,Sulfur dioxide,1091.61
-144,O3,Ozone,615.78
-4,P2,Diphosphorus,489.29
-27,PF3,Phosphorus trifluoride,1530.92
-117,PH2,Phosphino radical,645.47
-28,PH3,Phosphane,1012.24
-5,S2,Disulfur,433.94
-115,SiCH6,Methylsilane,2631.54
-75,SiCl4,Silicon tetrachloride,1627.56
-48,SiF4,Silicon tetrafluoride,2419.74
-93,SiH2,Singlet silylene,643.11
-94,SiH2,Triplet silylene,555.72
-49,SiH3,Silyl radical,953.44
-50,SiH4,Silane,1357.91
-31,SiO,Silicon monoxide,809.19
-74,Si2H6,Disilane,2240.54
-110,Si2,Disilicon,307.75
+,Formula,Name,E,xyz_idx
+0,AlCl3,Aluminum trichloride,1310.70,[67]
+1,AlF3,Aluminum trifluoride,1807.99,[41]
+2,BCl3,Boron trichloride,1359.87,[61]
+3,BF3,Boron trifluoride,1972.30,[133]
+4,BeH,Beryllium monohydride,212.50,[14]
+5,CCl4,Tetrachloromethane,1318.96,[36]
+6,CF4,Tetrafluoromethane,2005.71,[9]
+7,CH,Methylidyne radical,351.60,[108]
+8,CH2Cl2,Dichloromethane,1554.42,[146]
+9,CH2F2,Difluoromethane,1832.86,[62]
+10,CH2O2,Formic acid,2100.94,[53]
+11,CH2O,Formaldehyde,1567.43,[42]
+12,CH2,Singlet carbene,757.45,"[105, 106]"
+13,CH2,Triplet carbene,797.23,"[105, 106]"
+14,CH3Cl,Chloromethane,1656.17,[64]
+15,CH3,Methyl radical,1287.21,[116]
+16,CH3O,Hydroxymethyl radical,1715.47,"[37, 68]"
+17,CH3O,Methoxy radical,1674.66,"[37, 68]"
+18,CH3S,Methylthio radical,1601.03,[38]
+19,CH4,Methane,1757.82,[10]
+20,CH4O,Methanol,2147.84,[124]
+21,CH4S,Thiomethanol,1987.63,[65]
+22,CHCl3,Trichloromethane,1444.48,[66]
+23,CHF3,Trifluoromethane,1924.71,[39]
+24,CHO,Formyl radical,1169.59,[19]
+25,CN,Cyano radical,758.56,[141]
+26,CNH,Hydrogen cyanide,1310.97,[18]
+27,CNH3O2,Methyl nitrite,2507.94,"[96, 137]"
+28,CNH3O2,Nitromethane,2518.40,"[96, 137]"
+29,CNH5,Methylamine,2434.89,[87]
+30,C2Cl4,Tetrachloroethylene,1976.57,[134]
+31,C2F4,Tetrafluoroethylene,2470.91,[123]
+32,C2H,Ethynyl radical,1112.08,[8]
+33,C2H2,Acetylene,1695.79,[101]
+34,C2H2O2,Glyoxal,2657.71,[139]
+35,C2H2O,Ketene,2232.05,[77]
+36,C2H3Cl,Vinyl chloride,2276.50,[143]
+37,C2H3,Vinyl radical,1864.92,[34]
+38,C2H3F,Vinyl fluoride,2400.61,[102]
+39,C2H3O,Carbonyl methane,2436.67,[63]
+40,C2H3OCl,Acetyl chloride,2798.87,[140]
+41,C2H3OF,Acetyl fluoride,2957.91,[100]
+42,C2H4,Ethylene,2358.75,[54]
+43,C2H4O2,Acetic acid,3363.76,"[79, 85]"
+44,C2H4O2,Methyl formate,3292.61,"[79, 85]"
+45,C2H4O,Acetaldehyde,2835.43,"[81, 82]"
+46,C2H4O,Oxirane,2725.51,"[81, 82]"
+47,C2H4S,Thiirane,2620.57,[95]
+48,C2H5Cl,Ethyl chloride,2897.60,[104]
+49,C2H5,Ethyl radical,2526.01,[35]
+50,C2H5O,Ethoxy radical,2919.13,[126]
+51,C2H6,Ethane,2981.64,[59]
+52,C2H6O,Dimethyl ether,3341.56,"[119, 147]"
+53,C2H6O,Ethanol,3392.98,"[119, 147]"
+54,C2H6OS,Dimethyl sulfoxide,3587.65,[57]
+55,C2H6S,Dimethyl sulfide,3217.58,"[73, 127]"
+56,C2H6S,Thioethanol,3222.30,"[73, 127]"
+57,C2N2,Cyanogen,2100.20,[103]
+58,C2NF3,Trifluoroacetonitril,2688.27,[60]
+59,C2NH3,Acetonitrile,2578.87,[145]
+60,C2NH5,Aziridine,3012.94,[128]
+61,C2NH5O,Acetamide,3633.73,[98]
+62,C2NH7,Dimethylamine,3640.55,"[120, 142]"
+63,C2NH7,Ethylamine,3674.87,"[120, 142]"
+64,C3H4,Allene,2944.45,"[33, 91, 112]"
+65,C3H4,Cyclopropene,2852.25,"[33, 91, 112]"
+66,C3H4,Propyne,2950.5,"[33, 91, 112]"
+67,C3H6,Cyclopropane,3571.3,"[90, 111]"
+68,C3H6O,Acetone,4097.39,[138]
+69,C3H6,Propene,3602.67,"[90, 111]"
+70,C3H7Cl,1-Chloropropane,4130.72,[51]
+71,C3H7,Isopropyl radical,3769.88,[97]
+72,C3H8O,Methoxyethane,4587.12,"[70, 131]"
+73,C3H8O,Isopropyl alcohol,4641.05,"[70, 131]"
+74,C3H8,Propane,4214.27,[89]
+75,C3NH3,Acrylonitrile,3191.46,[130]
+76,C3NH9,Trimethylamine,4857.95,[118]
+77,C4H10,Isobutane,5453.18,"[78, 135]"
+78,C4H10,n-Butane,5447.22,"[78, 135]"
+79,C4H4O,Furan,4164.49,[69]
+80,C4H4S,Thiophene,4038.49,[132]
+81,C4H6,"1,3-Butadiene",4237.73,"[56, 86, 92, 125, 129]"
+82,C4H6,2-Butyne,4201.18,"[56, 86, 92, 125, 129]"
+83,C4H6,Bicyclo[1.1.0]butane,4125.62,"[56, 86, 92, 125, 129]"
+84,C4H6,Cyclobutene,4189.71,"[56, 86, 92, 125, 129]"
+85,C4H6,Methylenecyclopropane,4154.81,"[56, 86, 92, 125, 129]"
+86,C4H8,Cyclobutane,4811.19,"[55, 136]"
+87,C4H8,Isobutene,4849.73,"[55, 136]"
+88,C4H9,tert-Butyl radical,5016.63,[76]
+89,C4NH5,Pyrrole,4488.94,[99]
+90,C5H8,Spiropentane,5376.77,[32]
+91,C5NH5,Pyridine,5183.94,[109]
+92,C6H6,Benzene,5727.81,[71]
+93,Cl2,Dichlorine,248.22,[17]
+94,CO,Carbon monoxide,1087.57,[0]
+95,CO2,Carbon dioxide,1633.95,[11]
+96,COF2,Carbonyl fluoride,1762.1,[40]
+97,COS,Carbonyl sulfide,1406.74,[72]
+98,CS,Carbon monosulfide,719.47,[1]
+99,CS2,Carbon disulfide,1174.07,[12]
+100,FCl,Chlorine monofluoride,262.43,[80]
+101,F2,Difluorine,162.31,[114]
+102,F3Cl,Chlorine trifluoride,537.44,[44]
+103,HCl,Hydrogen chloride,449.58,[20]
+104,HF,Hydrogen fluoride,593.02,[3]
+105,HOCl,Hypochlorous acid,695.38,[46]
+106,HO,Hydroxyl radical,448.3,[107]
+107,HS,Mercapto radical,366.55,[6]
+108,H2,Dihydrogen,457.73,[2]
+109,H2O2,Hydrogen peroxide,1126.34,[43]
+110,H2O,Water,974.94,[15]
+111,H2S,Hydrogen sulfide,768.72,[16]
+112,LiF,Lithium fluoride,583.99,[25]
+113,LiH,Lithium hydride,242.27,[26]
+114,Li2,Dilithium,101.24,[24]
+115,Na2,Disodium,71.78,[29]
+116,NaCl,Sodium chloride,412.96,[47]
+117,NF3,Trifluoroamine,863.68,[22]
+118,NH2,Amino radical,762.95,[122]
+119,NH3,Ammonia,1245.99,[58]
+120,NH,Imidogen,347.02,[84]
+121,NO2,Nitrogen dioxide,954.10,[23]
+122,NOCl,Nitrosyl chloride,803.43,[45]
+123,NO,Nitric oxide,639.28,[83]
+124,N2,Dinitrogen,955.82,[113]
+125,N2H4,Hydrazine,1832.69,[52]
+126,N2O,Nitrous oxide,1133.70,[21]
+127,OCl,Monochlorine monoxide,271.20,[88]
+128,OF2,Difluorine monoxide,392.68,[13]
+129,OS,Sulfur monoxide,528.72,[7]
+130,O2,Dioxygen,505.88,[121]
+131,O2S,Sulfur dioxide,1091.61,[30]
+132,O3,Ozone,615.78,[144]
+133,P2,Diphosphorus,489.29,[4]
+134,PF3,Phosphorus trifluoride,1530.92,[27]
+135,PH2,Phosphino radical,645.47,[117]
+136,PH3,Phosphane,1012.24,[28]
+137,S2,Disulfur,433.94,[5]
+138,SiCH6,Methylsilane,2631.54,[115]
+139,SiCl4,Silicon tetrachloride,1627.56,[75]
+140,SiF4,Silicon tetrafluoride,2419.74,[48]
+141,SiH2,Singlet silylene,643.11,"[93, 94]"
+142,SiH2,Triplet silylene,555.72,"[93, 94]"
+143,SiH3,Silyl radical,953.44,[49]
+144,SiH4,Silane,1357.91,[50]
+145,SiO,Silicon monoxide,809.19,[31]
+146,Si2H6,Disilane,2240.54,[74]
+147,Si2,Disilicon,307.75,[110]

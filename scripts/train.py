@@ -253,19 +253,26 @@ if __name__ == '__main__':
 
         Es = []
         E_pretrained = []
+        tested = []
         #TODO: fix how things are loaded to use testrun
         #for dm_init, matrices, e_ref, dm_ref in dataloader_train:
         #for dm_init, matrices in dataloader_train:
         for tridx, data in enumerate(dataloader_train):
             atom = atoms[tridx]
             cf, cs = (atom.get_chemical_formula(), str(atom.symbols))
+            sc = atom.info.get('sc',True)
+
+            #If atom not self-consistent, skip
+            if not sc:
+                print('skipping {}, not sc'.format(cf))
+            if ( (cf in skips) or (cs in skips) ):
+                print("skipping {}".format(atom.get_chemical_formula()))
+                continue
+            tested.append(atom)
             print("====================================")
             print("Testrun Calculation")
             print(tridx, atom, cf, cs)
             print("====================================")
-            if ( (cf in skips) or (cs in skips) ):
-                print("skipping {}".format(atom.get_chemical_formula()))
-                continue
             dm_init = data[0]
             matrices = data[1]
             
@@ -276,10 +283,6 @@ if __name__ == '__main__':
                 print("Wrong key, trying Etot from matrices")
                 e_ref = matrices['Etot']
             dm_ref = matrices['dm']
-            sc = atom.info.get('sc',True)
-
-            #If atom not self-consistent, skip
-            if not sc: continue 
             dm_init = dm_init.to(DEVICE)
             e_ref = e_ref.to(DEVICE)
             dm_ref = dm_ref.to(DEVICE)
@@ -308,9 +311,8 @@ if __name__ == '__main__':
         with open(logpath+'testrun.dat', 'w') as f:
             f.write('#IDX FORMULA SYMBOLS E_PRETRAINED_MODEL E_DFT_BASELINE E_ERROR CONVERGENCE SC\n')
 
-            testwritei = 0
-            for i in range(len(atoms)):
-                atom = atoms[i]
+            for i in range(len(tested)):
+                atom = tested[i]
                 sc = atom.info.get('sc', True)
                 cf, cs = (atom.get_chemical_formula(), str(atom.symbols))
                 if not sc:
@@ -318,9 +320,8 @@ if __name__ == '__main__':
                 if ( (cf in skips) or (cs in skips) ):
                     print("write test: skipping {}".format(atom.get_chemical_formula()))
                     continue
-                f.write('{} {} {} {} {} {} {} {}\n'.format(testwritei, cf, cs, e_premodel[testwritei],
-                E_pretrained[testwritei], error_pretrain[testwritei], convergence[testwritei], sc))
-                testwritei += 1
+                f.write('{} {} {} {} {} {} {} {}\n'.format(i, cf, cs, e_premodel[i],
+                E_pretrained[i], error_pretrain[i], convergence[i], sc))
 
             
 

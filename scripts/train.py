@@ -265,8 +265,9 @@ if __name__ == '__main__':
             #If atom not self-consistent, skip
             if not sc:
                 print('skipping {}, not sc'.format(cf))
+                continue
             if ( (cf in skips) or (cs in skips) ):
-                print("skipping {}".format(atom.get_chemical_formula()))
+                print("skipping {}, in skips".format(atom.get_chemical_formula()))
                 continue
             tested.append(atom)
             print("====================================")

@@ -253,7 +253,6 @@ if __name__ == '__main__':
 
         Es = []
         E_pretrained = []
-        cnt = 0
         #TODO: fix how things are loaded to use testrun
         #for dm_init, matrices, e_ref, dm_ref in dataloader_train:
         #for dm_init, matrices in dataloader_train:
@@ -277,9 +276,8 @@ if __name__ == '__main__':
                 print("Wrong key, trying Etot from matrices")
                 e_ref = matrices['Etot']
             dm_ref = matrices['dm']
-            print(atoms[cnt])
-            sc = atoms[cnt].info.get('sc',True)
-            cnt += 1
+            sc = atom.info.get('sc',True)
+
             #If atom not self-consistent, skip
             if not sc: continue 
             dm_init = dm_init.to(DEVICE)
@@ -299,11 +297,31 @@ if __name__ == '__main__':
             else:
                 Es.append(np.array([E.detach().cpu().numpy()]*scf.nsteps))
         e_premodel = np.array(Es)[:,-1]
+        error_pretrain = e_premodel - np.array(E_pretrained)
+        convergence = np.array(Es)[:,-1]-np.array(Es)[:,-2]
         print("\n ------- Statistics ----- ")
         print(str(e_premodel), 'Energies from pretrained model' )
         print(str(np.array(E_pretrained)),'Energies from exact DFT baseline')
-        print(str(e_premodel - np.array(E_pretrained)), 'Pretraining error')
-        print(str(np.array(Es)[:,-1]-np.array(Es)[:,-2]), 'Convergence')
+        print(str(error_pretrain), 'Pretraining error')
+        print(str(convergence), 'Convergence')
+
+        with open(logpath+'testrun.dat', 'w') as f:
+            f.write('#IDX FORMULA SYMBOLS E_PRETRAINED_MODEL E_DFT_BASELINE E_ERROR CONVERGENCE')
+
+        testwritei = 0
+        for i in range(len(atoms)):
+            atom = atoms[i]
+            cf, cs = (atom.get_chemical_formula(), str(atom.symbols))
+            if ( (cf in skips) or (cs in skips) ):
+                print("write test: skipping {}".format(atom.get_chemical_formula()))
+                continue
+            with open(logpath+'testrun.dat', 'w') as f:
+                f.write('{} {} {} {} {} {} {}\n'.format(testwritei, cf, cs, e_premodel[testwritei],
+                E_pretrained[testwritei], error_pretrain[testwritei], convergence[testwritei]))
+            testwritei += 1
+
+            
+
 
     print("\n ======= Starting training ====== \n\n")
     scf.xc.train()

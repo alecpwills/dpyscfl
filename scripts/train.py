@@ -308,17 +308,16 @@ if __name__ == '__main__':
         with open(logpath+'testrun.dat', 'w') as f:
             f.write('#IDX FORMULA SYMBOLS E_PRETRAINED_MODEL E_DFT_BASELINE E_ERROR CONVERGENCE')
 
-        testwritei = 0
-        for i in range(len(atoms)):
-            atom = atoms[i]
-            cf, cs = (atom.get_chemical_formula(), str(atom.symbols))
-            if ( (cf in skips) or (cs in skips) ):
-                print("write test: skipping {}".format(atom.get_chemical_formula()))
-                continue
-            with open(logpath+'testrun.dat', 'w') as f:
+            testwritei = 0
+            for i in range(len(atoms)):
+                atom = atoms[i]
+                cf, cs = (atom.get_chemical_formula(), str(atom.symbols))
+                if ( (cf in skips) or (cs in skips) ):
+                    print("write test: skipping {}".format(atom.get_chemical_formula()))
+                    continue
                 f.write('{} {} {} {} {} {} {}\n'.format(testwritei, cf, cs, e_premodel[testwritei],
                 E_pretrained[testwritei], error_pretrain[testwritei], convergence[testwritei]))
-            testwritei += 1
+                testwritei += 1
 
             
 

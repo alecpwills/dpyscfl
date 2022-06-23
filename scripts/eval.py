@@ -36,7 +36,12 @@ parser.add_argument('--skipidcs', nargs='*', type=int, help="Indices to skip dur
 parser.add_argument('--skipforms', nargs='*', type=str, help='Formulas to skip during evaluation')
 parser.add_argument('--memwatch', action='store_true', default=False, help='UNIMPLEMENTED YET')
 parser.add_argument('--nowrapscf', action='store_true', default=False, help="Whether to wrap SCF calc in exception catcher")
+parser.add_argument('--evtohart', action='store_true', default=False, help='If flagged, assumes read reference energies in eV and converts to Hartree')
 args = parser.parse_args()
+
+scale = 1
+if args.evtohart:
+    scale = Hartree
 
 def KS(mol, method, model_path='', nxc_kind='grid', **kwargs):
     """ Wrapper for the pyscf RKS and UKS class
@@ -168,7 +173,7 @@ skipforms = args.skipforms if args.skipforms else []
 
 def eval_wrap(atomspath, refdatpath, modelpath, evalinds=[]):
     atoms = read(atomsp, ':')
-    e_refs = [a.calc.results['energy']/Hartree for a in atoms]
+    e_refs = [a.calc.results['energy']/scale for a in atoms]
     indices = np.arange(len(atoms)).tolist()
     ref_dct = {'E':[], 'dm':[], 'mo_e':[]}
     pred_dct = {'E':[], 'dm':[], 'mo_e':[]}
@@ -248,7 +253,7 @@ if __name__ == '__main__':
     print("READING TESTING TRAJECTORY.")
     atomsp = os.path.join(args.refpath, args.reftraj)
     atoms = read(atomsp, ':')
-    e_refs = [a.calc.results['energy']/Hartree for a in atoms]
+    e_refs = [a.calc.results['energy']/scale for a in atoms]
     indices = np.arange(len(atoms)).tolist()
 
     ref_dct = {'E':[], 'dm':[], 'mo_e':[]}

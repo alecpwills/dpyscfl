@@ -293,7 +293,7 @@ if __name__ == '__main__':
             if not results:
                 continue
 
-            E_pretrained.append(matrices['e_pretrained'])
+            E_pretrained.append(matrices['e_base'])
             E = results['E']
 
             if sc:
@@ -311,7 +311,7 @@ if __name__ == '__main__':
 
         with open(logpath+'testrun.dat', 'w') as f:
             f.write('#IDX FORMULA SYMBOLS E_PRETRAINED_MODEL E_DFT_BASELINE E_ERROR CONVERGENCE SC\n')
-            f.write("#MSE: {}".format(1/(len(error_pretrain))*np.sqrt(np.sum(error_pretrain**2))))
+            f.write("#MSE: {}\n".format(1/(len(error_pretrain))*np.sqrt(np.sum(error_pretrain**2))))
             for i in range(len(tested)):
                 atom = tested[i]
                 sc = atom.info.get('sc', True)

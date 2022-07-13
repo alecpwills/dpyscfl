@@ -198,8 +198,7 @@ def ae_loss(ref_dict,pred_dict, loss, **kwargs):
         Calulates atomization energy loss from reference values.
 
     Args:
-        ref_dict ([dict]): A dictionary of reference atomization energies. Only ref_dict[molecule] used,
-                            as that is entry storing atomization energy.
+        ref_dict ([dict]): A dictionary of reference atomization energies, whose values are flattened to a list.
         pred_dict ([dict]): A dictionary of predicted atomization energies, whose values are flattened to a list.
         loss (callable): Callable loss function
         weights (torch.Tensor) [optional]: if specified, scale individual energy differences.
@@ -263,7 +262,12 @@ def atomization_energies(energies):
         else:
             e_tot = np.array(energies[key])
             e_tot_size = e_tot.shape
-        for symbol in split(key):
+        symsplit = split(key)
+        #If it is an AA reaction, energy difference between same species configurations.
+        #Don't subtract A off twice, subtract AA-A for the target energy difference.
+        if symsplit == ['A', 'A']:
+            symsplit = ['A']
+        for symbol in symsplit:
             #if single atom, continue
             if len(split(key)) == 1: continue
             e_sub = energies[symbol]

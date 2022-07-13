@@ -213,8 +213,6 @@ if __name__ == '__main__':
             comp.append(pure_atoms[a][0])
         molecules[molecule] += comp
 
-    #a_count = {idx: len(at.positions) for idx,at in enumerate(atoms)}
-    a_count = {a: np.sum([a in molecules[mol] for mol in molecules]) for a in np.unique([m  for mol in molecules for m in molecules[mol]])}
     
     print("PARSING REACTIONS")
     reactions = {}
@@ -228,8 +226,14 @@ if __name__ == '__main__':
     print(reactions)
     molecules.update(reactions)
 
+
+    #a_count = {idx: len(at.positions) for idx,at in enumerate(atoms)}
+    a_count = {a: np.sum([a in molecules[mol] for mol in molecules]) for a in np.unique([m  for mol in molecules for m in molecules[mol]])}
+
     print("MOLECULES TO TRAIN ON")
     print(molecules)
+    print("A_COUNT")
+    print(a_count)
 
     best_loss = 1e6
     print("GENERATING SCF OBJECT")
@@ -541,7 +545,7 @@ if __name__ == '__main__':
                                 losses['E'] = (partial(energy_loss, loss = torch.nn.MSELoss()), args.E_weight)
 
                         #For each key in whichever loss dict chosen,
-                        #Select the function (it's a tuple of itself), feed in results dict, normalize by number of atoms
+                        #Select the function (it's a tuple of itself, its weight), feed in results dict, normalize by number of atoms
                         losses_eval = {key: losses[key][0](results)/a_count[idx] for key in losses}
                         print("LOSSES_EVAL: ", losses_eval)
                         #Update running losses with new losses
@@ -607,6 +611,7 @@ if __name__ == '__main__':
                             #ref_dict[''.join(atoms[idx].get_chemical_symbols())] = torch.zeros_like(e_ref)
                             ref_dict[''.join(atoms[idx].get_chemical_symbols())] = e_ref
                             pred_dict[''.join(atoms[idx].get_chemical_symbols())] = results['E'][skip_steps:]
+                        #add losses*loss_weight from dictionary
                         loss += sum([losses_eval[key]*losses[key][1] for key in losses])
                         print(loss)
                     if not results:

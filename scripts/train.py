@@ -563,7 +563,7 @@ if __name__ == '__main__':
                         #Typically, reactant is charged so reaction == 1 is neutral
                         elif reaction == 1:
                             print("REACTION TYPE: 1. A -> A")
-                            ref_dict['AA'] = e_ref*2
+                            ref_dict['AA'] = e_ref
                             #if sc, get last skip_steps of scf cycle energies
                             #otherwise, get energy as list
                             if sc:

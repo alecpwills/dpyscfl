@@ -198,7 +198,8 @@ def ae_loss(ref_dict,pred_dict, loss, **kwargs):
         Calulates atomization energy loss from reference values.
 
     Args:
-        ref_dict ([dict]): A dictionary of reference atomization energies, whose values are flattened to a list.
+        ref_dict ([dict]): A dictionary of reference atomization energies. Only ref_dict[molecule] used,
+                            as that is entry storing atomization energy.
         pred_dict ([dict]): A dictionary of predicted atomization energies, whose values are flattened to a list.
         loss (callable): Callable loss function
         weights (torch.Tensor) [optional]: if specified, scale individual energy differences.
@@ -212,11 +213,10 @@ def ae_loss(ref_dict,pred_dict, loss, **kwargs):
     print("REF: {}".format(ref_dict))
     print("PRED: {}".format(pred_dict))
     print("Flattening ref_dict, pred_dict")
-    ref = torch.cat(list(atomization_energies(ref_dict).values()))
-    pred = torch.cat(list(atomization_energies(pred_dict).values()))
-    print("FLAT: ref, pred: ", ref, pred)
-    #TODO: fix this, temporary
-    ref = ref[-1] if len(ref) > 1 else ref
+    #ref = torch.cat(list(atomization_energies(ref_dict).values()))
+    atm_pred = atomization_energies(pred_dict)
+    ref = ref_dict[list(atm_pred.keys())[0]]
+    pred = torch.cat(list(atm_pred.values()))
     assert len(ref) == 1
     ref = ref.expand(pred.size()[0])
     if pred.size()[0] > 1:
@@ -229,19 +229,25 @@ def ae_loss(ref_dict,pred_dict, loss, **kwargs):
 
 
 def atomization_energies(energies):
-    """[summary]
+    """Calculates atomization energies based on a dictionary of molecule/atomic energies.
+    
+    energies['ABCD'] = molecular energy
+    energies['A'], energies['B'], etc. = atomic energy.
+    
+    Loops over ABCD - A - B - C - D
 
     Args:
-        energies ([type]): [description]
+        energies (dict): dictionary of molecule and constituent atomic energies.
     """
     def split(el):
-        """[summary]
+        """Regex split molecule's symbolic expansion into constituent elements.
+        No numbers must be present -- CH2 = CHH.
 
         Args:
-            el ([type]): [description]
+            el (str): Molecule symbols
 
         Returns:
-            [type]: [description]
+            list: list of individual atoms in molecule
         """
         import re
         res_list = [s for s in re.split("([A-Z][^A-Z]*)", el) if s]

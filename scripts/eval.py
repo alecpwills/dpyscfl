@@ -37,6 +37,9 @@ parser.add_argument('--skipforms', nargs='*', type=str, help='Formulas to skip d
 parser.add_argument('--memwatch', action='store_true', default=False, help='UNIMPLEMENTED YET')
 parser.add_argument('--nowrapscf', action='store_true', default=False, help="Whether to wrap SCF calc in exception catcher")
 parser.add_argument('--evtohart', action='store_true', default=False, help='If flagged, assumes read reference energies in eV and converts to Hartree')
+parser.add_argument('--gridlevel', action='store', type=int, default=5, help='grid level')
+parser.add_argument('--maxcycle', action='store', type=int, default=50, help='limit to scf cycles')
+
 args = parser.parse_args()
 
 scale = 1
@@ -281,10 +284,11 @@ if __name__ == '__main__':
             fails.append((idx, formula))
             continue
         name, mol = ase_atoms_to_mol(atom)
-        _, method = gen_mf_mol(mol, xc='notnull', grid_level=3, nxc=True)
+        _, method = gen_mf_mol(mol, xc='notnull', grid_level=args.gridlevel, nxc=True)
         mf = KS(mol, method, model_path=args.modelpath)
-        mf.grids.level = 3
+        mf.grids.level = args.gridlevel
         mf.density_fit()
+        mf.max_cycle = args.maxcycle
         mf.kernel()
         e_pred = mf.e_tot
         dm_pred = mf.make_rdm1()

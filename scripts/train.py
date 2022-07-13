@@ -514,18 +514,21 @@ if __name__ == '__main__':
                             results['rho'] *= args.radical_factor
                             results['dm'] *= args.radical_factor
                         #If molecule and self-consistent, use "mol_losses" dict
+                        #Only rho loss
                         if len(atoms[idx].positions) > 1 and sc:
                             print("MOL_LOSSES")
                             losses = mol_losses
                         #Else, if chosen atom is either H or Li, and args specify use both, and the H/Li not involved in reaction
+                        #Rho and energy loss
                         elif str(atoms[idx].symbols) in ['H', 'Li'] and args.hnorm and not reaction:
                             print("H_LOSSES")
                             losses = h_losses
                         #Otherwise, if just an atom not in a reaction:
+                        #Only energy loss -- E_ref for atoms is total atomic, not atomization
                         elif sc and not reaction:
                             print("ATM_LOSSES")
                             losses = atm_losses
-                        #Else empty loss dict
+                        #Else empty loss dict if reaction or not sc
                         else:
                             losses = {}
                         #if choose to force density loss, h_losses contains e_loss and rho_loss
@@ -557,7 +560,12 @@ if __name__ == '__main__':
                         elif reaction == 1:
                             print("REACTION TYPE: 1. A -> A")
                             ref_dict['AA'] = e_ref*2
-                            pred_dict['AA'] = results['E'][skip_steps:]*2
+                            #if sc, get last skip_steps of scf cycle energies
+                            #otherwise, get energy as list
+                            if sc:
+                                pred_dict['AA'] = results['E'][skip_steps:]
+                            else:
+                                pred_dict['AA'] = results['E'][-1:]
                         #ELSE IF it is a reactant in either of the above pathways,
                         elif reaction == 'reactant':
                             print("REACTION TYPE: REACTANT.")
@@ -605,8 +613,6 @@ if __name__ == '__main__':
                     print("PRED_DICT: ", pred_dict)
                     ael = ae_loss(ref_dict,pred_dict)
                     running_losses['ae'] += ael.item()
-                    print('predict dict', pred_dict)
-                    print('ref dict', ref_dict)
                     print('AE loss', ael.item())
                     if mol_sc:
                         running_losses['ae'] += ael.item()

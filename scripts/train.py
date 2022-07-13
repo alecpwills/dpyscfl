@@ -60,6 +60,7 @@ parser.add_argument('--meta_x', metavar='meta_x',type=float, default=None, help=
 parser.add_argument('--rho_alt', action='store_true', help='Alternative rho loss on total density')
 parser.add_argument('--radical_factor', metavar='radical_factor',type=float, default=1.0, help='')
 parser.add_argument('--forcedensloss', action='store_true', default=False, help='Make training use density loss.')
+parser.add_argument('--forceEloss', action='store_true', default=False, help='Make training use TOTAL energy loss. Ill-advised to use given atomization energy structure.')
 parser.add_argument('--freezeappend',  type=int, action='store', default=0, help='If flagged, freezes network and adds N duplicate layers between output layer and last hidden layer. The new layer is not frozen.')
 parser.add_argument('--loadfa', type=int, action='store', default=0, help='If loading model that has appended layers, specify number of inserts between previous final and output layers here.')
 parser.add_argument('--outputlayergrad', action='store_true', default=False, help='Only works with freezeappend. If flagged, sets the output layer to also be differentiable.')
@@ -531,10 +532,13 @@ if __name__ == '__main__':
                         #Else empty loss dict if reaction or not sc
                         else:
                             losses = {}
-                        #if choose to force density loss, h_losses contains e_loss and rho_loss
+                        #if choose to force density or e loss, manually add back in
                         if args.forcedensloss:
-                            print("FORCED DENSITY LOSS")
-                            losses = h_losses
+                            if 'rho' not in losses.keys():
+                                losses['rho'] = (partial(density_loss,loss = torch.nn.MSELoss()), args.rho_weight)
+                        if args.forceEloss:
+                            if 'E' not in losses.keys():
+                                losses['E'] = (partial(energy_loss, loss = torch.nn.MSELoss()), args.E_weight)
 
                         #For each key in whichever loss dict chosen,
                         #Select the function (it's a tuple of itself), feed in results dict, normalize by number of atoms

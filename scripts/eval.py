@@ -4,7 +4,8 @@ import torch
 torch.set_default_dtype(torch.float)
 import pylibnxc
 import numpy as np
-from ase.io import read
+from ase.io import read, write
+from ase import Atoms
 from dpyscfl.net import *
 from dpyscfl.scf import *
 from dpyscfl.utils import *
@@ -39,7 +40,7 @@ parser.add_argument('--nowrapscf', action='store_true', default=False, help="Whe
 parser.add_argument('--evtohart', action='store_true', default=False, help='If flagged, assumes read reference energies in eV and converts to Hartree')
 parser.add_argument('--gridlevel', action='store', type=int, default=5, help='grid level')
 parser.add_argument('--maxcycle', action='store', type=int, default=50, help='limit to scf cycles')
-
+parser.add_argument('--atomization', action='store_true', default=False, help="If flagged, does atomization energies as well as total energies.")
 args = parser.parse_args()
 
 scale = 1
@@ -176,7 +177,7 @@ skipforms = args.skipforms if args.skipforms else []
 
 def eval_wrap(atomspath, refdatpath, modelpath, evalinds=[]):
     atoms = read(atomsp, ':')
-    e_refs = [a.calc.results['energy']/scale for a in atoms]
+    e_refs = [a.info['energy']/scale for a in atoms]
     indices = np.arange(len(atoms)).tolist()
     ref_dct = {'E':[], 'dm':[], 'mo_e':[]}
     pred_dct = {'E':[], 'dm':[], 'mo_e':[]}
@@ -253,17 +254,65 @@ if __name__ == '__main__':
             os.mkdir(os.path.join(args.writepath, args.writeeach))
         except:
             pass
-    print("READING TESTING TRAJECTORY.")
+    
     atomsp = os.path.join(args.refpath, args.reftraj)
+    print("READING TESTING TRAJECTORY: {}".format(atomsp))
     atoms = read(atomsp, ':')
-    e_refs = [a.calc.results['energy']/scale for a in atoms]
+    e_refs = [a.info['energy']/scale for a in atoms]
     indices = np.arange(len(atoms)).tolist()
+    
+    if args.atomization:
+        #try to read previous calc
+        #temp fix, negative sign because that's what the training assumes
+        ref_atm = [-a.info['atomization']/scale for a in atoms]
+        try:
+            with open('atomicen.pkl', 'rb') as f:
+                atomic_e = pickle.load(f)
+        except:
+            print("ATOMIZATION ENERGY FLAGGED -- CALCULATING SINGLE ATOM ENERGIES")
+            atomic = []
+            for at in atoms:
+                atomic += at.get_chemical_symbols()
+            atomic = list(set(atomic))
+            atomic_e = {s:0 for s in atomic}
+            atomic = [Atoms(symbols=s) for s in atomic]
+            atomic_mol = [ase_atoms_to_mol(at) for at in atomic]
+            atomic_method = [gen_mf_mol(mol[1], xc='notnull', grid_level=args.gridlevel, nxc=True) for mol in atomic_mol]
+            for idx, methodtup in enumerate(atomic_method):
+                print(idx, methodtup)
+                name, mol = atomic_mol[idx]
+                method = methodtup[1]
+                mf = KS(mol, method, model_path=args.modelpath)
+                mf.grids.level = args.gridlevel
+                mf.max_cycle = args.maxcycle
+                mf.density_fit()
+                mf.kernel()
+                atomic_e[name] = mf.e_tot
+                print("++++++++++++++++++++++++")
+                print("Atomic Energy: {} -- {}".format(name, mf.e_tot))
+                print("++++++++++++++++++++++++")
+            with open('atomicen.dat', 'w') as f:
+                f.write("#Atom \t Energy (Hartree) \n")
+                for k, v in atomic_e.items():
+                    f.write('{} \t {} \n'.format(k, v))
+                    print('{} \t {}'.format(k,v))
+            with open('atomicen.pkl', 'wb') as f:
+                pickle.dump(atomic_e, f)
+
 
     ref_dct = {'E':[], 'dm':[], 'mo_e':[]}
     pred_dct = {'E':[], 'dm':[], 'mo_e':[]}
+    pred_e = {idx:0 for idx in range(len(atoms))}
+    pred_dm = {idx:0 for idx in range(len(atoms))}
     loss = torch.nn.MSELoss()
 #    loss_dct = {k: 0 for k,v in ref_dct.items()}
     loss_dct = {"E":0}
+    if args.atomization:
+        pred_atm = {idx:0 for idx in range(len(atoms))}
+        ref_dct['atm'] = []
+        pred_dct['atm'] = []
+        loss_dct['atm'] = 0
+
     fails = []
     grid_level = 5 if args.xc else 0
     endidx = len(atoms) if args.endidx == -1 else args.endidx
@@ -292,6 +341,8 @@ if __name__ == '__main__':
         mf.kernel()
         e_pred = mf.e_tot
         dm_pred = mf.make_rdm1()
+        pred_e[idx] = [formula, e_pred]
+        pred_dm[idx] = [formula, dm_pred]
 
         dmp = os.path.join(args.refpath, '{}_{}.dm.npy'.format(idx, symbols))
         dm_ref = np.load(dmp)
@@ -299,6 +350,22 @@ if __name__ == '__main__':
 
         results['E'] = e_pred
         results['dm'] = dm_pred
+
+        if args.atomization:
+            start = e_pred
+            subs = atom.get_chemical_symbols()
+            print("{} ({}) decomposition -> {}".format(formula, start, subs))
+            for s in subs:
+                print("{} - {} ::: {} - {} = {}".format(formula, s, start, atomic_e[s], start - atomic_e[s]))
+                start -= atomic_e[s]
+            print("Predicted Atomization Energy for {} : {}".format(formula, start))
+            print("Reference Atomization Energy for {} : {}".format(formula, ref_atm[idx]))
+            results['atm'] = start
+            pred_atm[idx] = [formula, results['atm']]
+            ref_dct['atm'].append(ref_atm[idx])
+            pred_dct['atm'].append(results['atm'])
+            print("Error: {}".format(start - ref_atm[idx]))
+
         
 
         if args.writeeach:
@@ -314,6 +381,11 @@ if __name__ == '__main__':
         pred_dct['E'].append(results['E'])
         pred_dct['dm'].append(results['dm'])
 
+        print("Predicted Total Energy for {} : {}".format(formula, results['E']))
+        print("Reference Total Energy for {} : {}".format(formula, e_ref))
+        print("Error: {}".format(results['E'] - e_ref))
+
+
         for key in loss_dct.keys():
             print(key)
             rd = torch.Tensor(ref_dct[key])
@@ -324,7 +396,20 @@ if __name__ == '__main__':
         print("RUNNING LOSS")
         print(loss_dct)
         print("+++++++++++++++++++++++++++++++")
-    
+    with open(args.writepath+'/pred_e.dat', 'w') as f:
+        f.write("#Index \t Atom \t Energy (Hartree) \n")
+        ks = sorted(list(pred_e.keys()))
+        for idx, k in enumerate(pred_e):
+                v = pred_e[k]
+                f.write("{} \t {} \t {} \n".format(k, v[0], v[1]))
+    if args.atomization:
+        with open(args.writepath+'/pred_atm.dat', 'w') as f:
+            f.write("#Index \t Atom \t Atomization Energy (Hartree) \n")
+            ks = sorted(list(pred_atm.keys()))
+            for k in ks:
+                v = pred_e[k]
+                f.write("{} \t {} \t {} \n".format(k, v[0], v[1]))
+
     with open(args.writepath+'/loss_dct_{}.pckl'.format(args.type), 'wb') as file:
         file.write(pickle.dumps(loss_dct))
     with open(args.writepath+'/loss_dct_{}.txt'.format(args.type), 'w') as file:

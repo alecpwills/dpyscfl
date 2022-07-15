@@ -262,6 +262,7 @@ if __name__ == '__main__':
         #TODO: fix how things are loaded to use testrun
         #for dm_init, matrices, e_ref, dm_ref in dataloader_train:
         #for dm_init, matrices in dataloader_train:
+        #TODO: way data is loaded makes this incorrect -- e_ref is the atomization, not total energy
         for tridx, data in enumerate(dataloader_train):
             atom = atoms[tridx]
             cf, cs = (atom.get_chemical_formula(), str(atom.symbols))
@@ -288,6 +289,7 @@ if __name__ == '__main__':
             except KeyError:
                 print("Wrong key, trying Etot from matrices")
                 e_ref = matrices['Etot']
+
             dm_ref = matrices['dm']
             dm_init = dm_init.to(DEVICE)
             e_ref = e_ref.to(DEVICE)

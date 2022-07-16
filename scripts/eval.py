@@ -27,7 +27,7 @@ parser.add_argument('--refpath', action='store', type=str, help='Location of ref
 parser.add_argument('--reftraj', action='store', type=str, default="results.traj", help='File of reference trajectories')
 parser.add_argument('--modelpath', metavar='modelpath', type=str, default='', help='Net Checkpoint location to use evaluating. Must be a directory containing "xc" network or "scf" network. Directory path must contain LDA, GGA, or MGGA.')
 parser.add_argument('--writepath', action='store', default='.', help='where to write eval results')
-parser.add_argument('--writeeach', action='store', default='', help='where to write results individually')
+parser.add_argument('--writeeach', action='store', default='preds', help='where to write results individually')
 parser.add_argument('--writeref', action='store_true', default=False, help='write reference dictionaries')
 parser.add_argument('--writepred', action='store_true', default=False, help='write prediction dictionaries')
 parser.add_argument('--keeprho', action='store_true', default=False, help='whether to keep rho in matrix')
@@ -317,39 +317,56 @@ if __name__ == '__main__':
     grid_level = 5 if args.xc else 0
     endidx = len(atoms) if args.endidx == -1 else args.endidx
     for idx, atom in enumerate(atoms):
-        results = {}
-        #manually skip for preservation of reference file lookups
+        formula = atom.get_chemical_formula()
+        symbols = atom.symbols
         if idx < args.startidx:
             continue
         if idx > endidx:
             continue
 
-        formula = atom.get_chemical_formula()
-        symbols = atom.symbols
-        print("================= {}:    {} ======================".format(idx, formula))
-        print("Getting Datapoint")
-        if (formula in skipforms) or (idx in skipidcs):
-            print("SKIPPING")
-            fails.append((idx, formula))
-            continue
-        name, mol = ase_atoms_to_mol(atom)
-        _, method = gen_mf_mol(mol, xc='notnull', grid_level=args.gridlevel, nxc=True)
-        mf = KS(mol, method, model_path=args.modelpath)
-        mf.grids.level = args.gridlevel
-        mf.density_fit()
-        mf.max_cycle = args.maxcycle
-        mf.kernel()
-        e_pred = mf.e_tot
-        dm_pred = mf.make_rdm1()
-        pred_e[idx] = [formula, e_pred]
-        pred_dm[idx] = [formula, dm_pred]
+        try:
+            wep = os.path.join(args.writepath, args.writeeach)
+            if args.writepred:
+                predep = os.path.join(wep, '{}_{}.pckl'.format(idx, symbols))
+                with open(predep, 'rb') as file:
+                    results = pickle.load(file)
+                e_pred = results['E']
+                dm_pred = results['dm']
+                pred_e[idx] = [formula, e_pred]
+                pred_dm[idx] = [formula, dm_pred]
+
+                print("Results found for {} {}".format(idx, symbols))
+            else:
+                raise ValueError
+        except:
+            results = {}
+            #manually skip for preservation of reference file lookups
+
+            print("================= {}:    {} ======================".format(idx, formula))
+            print("Getting Datapoint")
+            if (formula in skipforms) or (idx in skipidcs):
+                print("SKIPPING")
+                fails.append((idx, formula))
+                continue
+            name, mol = ase_atoms_to_mol(atom)
+            _, method = gen_mf_mol(mol, xc='notnull', grid_level=args.gridlevel, nxc=True)
+            mf = KS(mol, method, model_path=args.modelpath)
+            mf.grids.level = args.gridlevel
+            mf.density_fit()
+            mf.max_cycle = args.maxcycle
+            mf.kernel()
+            e_pred = mf.e_tot
+            dm_pred = mf.make_rdm1()
+            pred_e[idx] = [formula, e_pred]
+            pred_dm[idx] = [formula, dm_pred]
+
+
+            results['E'] = e_pred
+            results['dm'] = dm_pred
 
         dmp = os.path.join(args.refpath, '{}_{}.dm.npy'.format(idx, symbols))
-        dm_ref = np.load(dmp)
+        dm_ref = np.load(dmp)        
         e_ref = e_refs[idx]
-
-        results['E'] = e_pred
-        results['dm'] = dm_pred
 
         if args.atomization:
             start = e_pred

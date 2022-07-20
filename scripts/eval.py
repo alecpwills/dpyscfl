@@ -41,6 +41,7 @@ parser.add_argument('--evtohart', action='store_true', default=False, help='If f
 parser.add_argument('--gridlevel', action='store', type=int, default=5, help='grid level')
 parser.add_argument('--maxcycle', action='store', type=int, default=50, help='limit to scf cycles')
 parser.add_argument('--atomization', action='store_true', default=False, help="If flagged, does atomization energies as well as total energies.")
+parser.add_argument('--atmflip', action='store_true', default=False, help="If flagged, does reverses reference atomization energies sign")
 args = parser.parse_args()
 
 scale = 1
@@ -264,7 +265,12 @@ if __name__ == '__main__':
     if args.atomization:
         #try to read previous calc
         #temp fix, negative sign because that's what the training assumes
-        ref_atm = [-a.info['atomization']/scale for a in atoms]
+        #or if already flipped, don't flip
+        if args.atmflip:
+            mult = -1
+        else:
+            mult = 1
+        ref_atm = [mult*a.info['atomization']/scale for a in atoms]
         try:
             with open('atomicen.pkl', 'rb') as f:
                 atomic_e = pickle.load(f)
@@ -371,17 +377,21 @@ if __name__ == '__main__':
         if args.atomization:
             start = e_pred
             subs = atom.get_chemical_symbols()
-            print("{} ({}) decomposition -> {}".format(formula, start, subs))
-            for s in subs:
-                print("{} - {} ::: {} - {} = {}".format(formula, s, start, atomic_e[s], start - atomic_e[s]))
-                start -= atomic_e[s]
-            print("Predicted Atomization Energy for {} : {}".format(formula, start))
-            print("Reference Atomization Energy for {} : {}".format(formula, ref_atm[idx]))
-            results['atm'] = start
-            pred_atm[idx] = [formula, results['atm']]
-            ref_dct['atm'].append(ref_atm[idx])
-            pred_dct['atm'].append(results['atm'])
-            print("Error: {}".format(start - ref_atm[idx]))
+            if len(subs) == 1:
+                #single atom, no atomization needed
+                print("SINGLE ATOM -- NO ATOMIZATION CALCULATION.")
+            else:
+                print("{} ({}) decomposition -> {}".format(formula, start, subs))
+                for s in subs:
+                    print("{} - {} ::: {} - {} = {}".format(formula, s, start, atomic_e[s], start - atomic_e[s]))
+                    start -= atomic_e[s]
+                print("Predicted Atomization Energy for {} : {}".format(formula, start))
+                print("Reference Atomization Energy for {} : {}".format(formula, ref_atm[idx]))
+                results['atm'] = start
+                pred_atm[idx] = [formula, results['atm']]
+                ref_dct['atm'].append(ref_atm[idx])
+                pred_dct['atm'].append(results['atm'])
+                print("Error: {}".format(start - ref_atm[idx]))
 
         
 

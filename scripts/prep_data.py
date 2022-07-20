@@ -57,7 +57,7 @@ if __name__ == '__main__':
 
         E_base =  [r[0] for r in baseline]
         with open('e_base.dat', 'w') as f:
-            f.write("#IDX ATOM E_BASE")
+            f.write("#IDX ATOM E_BASE\n")
             for i,at in enumerate(atoms):
                 f.write('{} {} {}\n'.format(i, at.get_chemical_formula(), E_base[i]))
         DM_base = [r[1] for r in baseline]

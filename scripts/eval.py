@@ -344,7 +344,7 @@ if __name__ == '__main__':
                 print("Results found for {} {}".format(idx, symbols))
             else:
                 raise ValueError
-        except:
+        except FileNotFoundError:
             results = {}
             #manually skip for preservation of reference file lookups
 
@@ -423,6 +423,23 @@ if __name__ == '__main__':
         print("RUNNING LOSS")
         print(loss_dct)
         print("+++++++++++++++++++++++++++++++")
+
+        if args.atomization:
+            writelab = '#Index \t Atom \t EPred (H) \t ERef (H) \t EErr (H) \t EPAtm (H) \t ERAtm (H) \t EAErr (H)\n'
+            writestr = '{} \t {} \t {} \t {} \t {} \t {} \t {} \t {}\n'.format(idx, formula, \
+                results['E'], e_ref, results['E']-e_ref, results['atm'], ref_atm[idx], results['atm'] - ref_atm[idx])
+        else:
+            writelab = '#Index \t Atom \t EPred (H) \t ERef (H) \t EErr (H)\n'
+            writestr = '{} \t {} \t {} \t {} \t {}\n'.format(idx, formula, \
+                results['E'], e_ref, results['E']-e_ref)
+        if idx == 0:
+            with open(args.writepath+'/table.dat', 'w') as f:
+                f.write(writelab)
+        else:
+            with open(args.writepath+'/table.dat', 'a') as f:
+                f.write(writestr)
+
+
     with open(args.writepath+'/pred_e.dat', 'w') as f:
         f.write("#Index \t Atom \t Energy (Hartree) \n")
         ks = sorted(list(pred_e.keys()))

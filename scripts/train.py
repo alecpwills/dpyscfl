@@ -406,7 +406,7 @@ if __name__ == '__main__':
                     if args.testmol:
                         if not ( (args.testmol == m_form) or (args.testmol in molecule) ):
                             continue
-                    if (m_form in skips) or (m_sym in skips) or (m_idx in molecules[molecule]):
+                    if (m_form in skips) or (m_sym in skips) or (m_idx in pop):
                         print("SKIPPING: ", molecule)
                         continue
                     mol_sc = True

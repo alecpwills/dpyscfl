@@ -142,8 +142,8 @@ if __name__ == '__main__':
     #Some molecules in the trajectory are not needed to reproduce xcdiff training set.
     #But don't pop them, because indexing important.
     #skips = ['O2', 'Cl2', 'HCl']
-#    skips = ['O2']
-    
+    #skips = ['O2']
+    skips = []
 #    pop = []
     pop = [34, 33, 32, 10, 7, 5]
 

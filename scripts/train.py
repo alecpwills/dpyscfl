@@ -314,10 +314,16 @@ if __name__ == '__main__':
             E = results['E']
 
             if sc:
+                tmpE = E.detach().cpu().numpy()
                 Es.append(E.detach().cpu().numpy())
             else:
+                tmpE = [E.detach().cpu().numpy()]*scf.nsteps
                 Es.append(np.array([E.detach().cpu().numpy()]*scf.nsteps))
-            print(Es)
+            tmpC = tmpE[-1] - tmpE[-2]
+
+            with open(logpath+'testrun.dat', 'a') as f:
+                f.write('{}\t {}\t {}\t {}\t {}\t {}\n'.format(i, cf, cs, tmpE[-1], tmpC, sc))
+
         e_premodel = np.array(Es)[:,-1]
         #error_pretrain = e_premodel - np.array(E_pretrained)
         convergence = np.array(Es)[:,-1]-np.array(Es)[:,-2]
@@ -327,7 +333,8 @@ if __name__ == '__main__':
         #print(str(error_pretrain), 'Pretraining error')
         print(str(convergence), 'Convergence')
 
-        with open(logpath+'testrun.dat', 'a') as f:
+        with open(logpath+'testrun2.dat', 'a') as f:
+            f.write('#IDX FORMULA SYMBOLS E_PRETRAINED_MODEL CONVERGENCE SC\n')
             for i in range(len(tested)):
                 atom = tested[i]
                 sc = atom.info.get('sc', True)

@@ -322,31 +322,31 @@ if __name__ == '__main__':
             tmpC = tmpE[-1] - tmpE[-2]
 
             with open(logpath+'testrun.dat', 'a') as f:
-                f.write('{}\t {}\t {}\t {}\t {}\t {}\n'.format(i, cf, cs, tmpE[-1], tmpC, sc))
+                f.write('{}\t {}\t {}\t {}\t {}\t {}\n'.format(tridx, cf, cs, tmpE[-1], tmpC, sc))
 
-        e_premodel = np.array(Es)[:,-1]
-        #error_pretrain = e_premodel - np.array(E_pretrained)
-        convergence = np.array(Es)[:,-1]-np.array(Es)[:,-2]
-        print("\n ------- Statistics ----- ")
-        print(str(e_premodel), 'Energies from model' )
-        #print(str(np.array(E_pretrained)),'Energies from exact DFT baseline')
-        #print(str(error_pretrain), 'Pretraining error')
-        print(str(convergence), 'Convergence')
+        # e_premodel = np.array(Es)[:,-1]
+        # #error_pretrain = e_premodel - np.array(E_pretrained)
+        # convergence = np.array(Es)[:,-1]-np.array(Es)[:,-2]
+        # print("\n ------- Statistics ----- ")
+        # print(str(e_premodel), 'Energies from model' )
+        # #print(str(np.array(E_pretrained)),'Energies from exact DFT baseline')
+        # #print(str(error_pretrain), 'Pretraining error')
+        # print(str(convergence), 'Convergence')
 
-        with open(logpath+'testrun2.dat', 'a') as f:
-            f.write('#IDX FORMULA SYMBOLS E_PRETRAINED_MODEL CONVERGENCE SC\n')
-            for i in range(len(tested)):
-                atom = tested[i]
-                sc = atom.info.get('sc', True)
-                cf, cs = (atom.get_chemical_formula(), str(atom.symbols))
-                if args.testall:
-                    print("Testall flagged")
-                elif not sc:
-                    print('non-sc atom {}, skipping')
-                elif ( (cf in skips) or (cs in skips) ):
-                    print("write test: skipping {}".format(atom.get_chemical_formula()))
-                    continue
-                f.write('{}\t {}\t {}\t {}\t {}\t {}\n'.format(i, cf, cs, e_premodel[i], convergence[i], sc))
+        # with open(logpath+'testrun2.dat', 'a') as f:
+        #     f.write('#IDX FORMULA SYMBOLS E_PRETRAINED_MODEL CONVERGENCE SC\n')
+        #     for i in range(len(tested)):
+        #         atom = tested[i]
+        #         sc = atom.info.get('sc', True)
+        #         cf, cs = (atom.get_chemical_formula(), str(atom.symbols))
+        #         if args.testall:
+        #             print("Testall flagged")
+        #         elif not sc:
+        #             print('non-sc atom {}, skipping')
+        #         elif ( (cf in skips) or (cs in skips) ):
+        #             print("write test: skipping {}".format(atom.get_chemical_formula()))
+        #             continue
+        #         f.write('{}\t {}\t {}\t {}\t {}\t {}\n'.format(i, cf, cs, e_premodel[i], convergence[i], sc))
 
             
 

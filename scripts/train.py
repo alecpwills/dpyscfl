@@ -258,6 +258,9 @@ if __name__ == '__main__':
 
     if args.testrun:
         print("\n ======= Starting testrun ====== \n\n")
+        with open(logpath+'testrun.dat', 'w') as f:
+            f.write('#IDX FORMULA SYMBOLS E_PRETRAINED_MODEL CONVERGENCE SC\n')
+
         #Set SCF Object training flag off
         scf.xc.evaluate()
 
@@ -314,6 +317,7 @@ if __name__ == '__main__':
                 Es.append(E.detach().cpu().numpy())
             else:
                 Es.append(np.array([E.detach().cpu().numpy()]*scf.nsteps))
+            print(Es)
         e_premodel = np.array(Es)[:,-1]
         #error_pretrain = e_premodel - np.array(E_pretrained)
         convergence = np.array(Es)[:,-1]-np.array(Es)[:,-2]
@@ -323,8 +327,7 @@ if __name__ == '__main__':
         #print(str(error_pretrain), 'Pretraining error')
         print(str(convergence), 'Convergence')
 
-        with open(logpath+'testrun.dat', 'w') as f:
-            f.write('#IDX FORMULA SYMBOLS E_PRETRAINED_MODEL CONVERGENCE SC\n')
+        with open(logpath+'testrun.dat', 'a') as f:
             for i in range(len(tested)):
                 atom = tested[i]
                 sc = atom.info.get('sc', True)

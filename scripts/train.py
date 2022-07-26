@@ -67,6 +67,7 @@ parser.add_argument('--outputlayergrad', action='store_true', default=False, hel
 parser.add_argument('--checkgrad', action='store_true', default=False, help='If flagged, executes loop over scf.xc parameters to print gradients')
 parser.add_argument('--testmol', type=str, action='store', default='', help='If specified, give symbols/formula/test label for debugging purpose')
 parser.add_argument('--torchtype', type=str, default='float', help='float or double')
+parser.add_argument('--testall', action='store_true', default=False, help='If flagged, forces testing of entire training set.')
 args = parser.parse_args()
 
 ttypes = {'float' : torch.float,
@@ -273,10 +274,12 @@ if __name__ == '__main__':
             sc = atom.info.get('sc',True)
 
             #If atom not self-consistent, skip
-            if not sc:
+            if args.testall:
+                print("Testing all molecules/atoms in training data.")
+            elif not sc:
                 print('skipping {}, not sc'.format(cf))
                 continue
-            if ( (cf in skips) or (cs in skips) ):
+            elif ( (cf in skips) or (cs in skips) ):
                 print("skipping {}, in skips".format(atom.get_chemical_formula()))
                 continue
             tested.append(atom)
@@ -304,7 +307,7 @@ if __name__ == '__main__':
             if not results:
                 continue
 
-            E_pretrained.append(matrices['e_base'])
+            #E_pretrained.append(matrices['e_base'])
             E = results['E']
 
             if sc:
@@ -312,28 +315,28 @@ if __name__ == '__main__':
             else:
                 Es.append(np.array([E.detach().cpu().numpy()]*scf.nsteps))
         e_premodel = np.array(Es)[:,-1]
-        error_pretrain = e_premodel - np.array(E_pretrained)
+        #error_pretrain = e_premodel - np.array(E_pretrained)
         convergence = np.array(Es)[:,-1]-np.array(Es)[:,-2]
         print("\n ------- Statistics ----- ")
-        print(str(e_premodel), 'Energies from pretrained model' )
-        print(str(np.array(E_pretrained)),'Energies from exact DFT baseline')
-        print(str(error_pretrain), 'Pretraining error')
+        print(str(e_premodel), 'Energies from model' )
+        #print(str(np.array(E_pretrained)),'Energies from exact DFT baseline')
+        #print(str(error_pretrain), 'Pretraining error')
         print(str(convergence), 'Convergence')
 
         with open(logpath+'testrun.dat', 'w') as f:
-            f.write('#IDX FORMULA SYMBOLS E_PRETRAINED_MODEL E_DFT_BASELINE E_ERROR CONVERGENCE SC\n')
-            f.write("#MSE: {}\n".format(1/(len(error_pretrain))*np.sqrt(np.sum(error_pretrain**2))))
+            f.write('#IDX FORMULA SYMBOLS E_PRETRAINED_MODEL CONVERGENCE SC\n')
             for i in range(len(tested)):
                 atom = tested[i]
                 sc = atom.info.get('sc', True)
                 cf, cs = (atom.get_chemical_formula(), str(atom.symbols))
-                if not sc:
+                if args.testall:
+                    print("Testall flagged")
+                elif not sc:
                     print('non-sc atom {}, skipping')
-                if ( (cf in skips) or (cs in skips) ):
+                elif ( (cf in skips) or (cs in skips) ):
                     print("write test: skipping {}".format(atom.get_chemical_formula()))
                     continue
-                f.write('{} {} {} {} {} {} {} {}\n'.format(i, cf, cs, e_premodel[i],
-                E_pretrained[i], error_pretrain[i], convergence[i], sc))
+                f.write('{}\t {}\t {}\t {}\t {}\t {}\n'.format(i, cf, cs, e_premodel[i], convergence[i], sc))
 
             
 

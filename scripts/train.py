@@ -317,7 +317,7 @@ if __name__ == '__main__':
                 tmpE = E.detach().cpu().numpy()
                 Es.append(E.detach().cpu().numpy())
             else:
-                tmpE = [E.detach().cpu().numpy()]*scf.nsteps
+                tmpE = [E.detach().cpu().numpy()[0]]*scf.nsteps
                 Es.append(np.array([E.detach().cpu().numpy()]*scf.nsteps))
             tmpC = tmpE[-1] - tmpE[-2]
 

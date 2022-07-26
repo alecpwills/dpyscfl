@@ -259,7 +259,7 @@ if __name__ == '__main__':
     if args.testrun:
         print("\n ======= Starting testrun ====== \n\n")
         with open(logpath+'testrun.dat', 'w') as f:
-            f.write('#IDX FORMULA SYMBOLS E_PRETRAINED_MODEL CONVERGENCE SC\n')
+            f.write('#IDX\t FORMULA\t SYMBOLS\t E_PRETRAINED_MODEL\t CONVERGENCE SC\n')
 
         #Set SCF Object training flag off
         scf.xc.evaluate()

@@ -142,9 +142,11 @@ if __name__ == '__main__':
     #Some molecules in the trajectory are not needed to reproduce xcdiff training set.
     #But don't pop them, because indexing important.
     #skips = ['O2', 'Cl2', 'HCl']
-    skips = ['O2']
+#    skips = ['O2']
     
-    pop = []
+#    pop = []
+    pop = [34, 33, 32, 10, 7, 5]
+
     #print("popping specified atoms: {}".format(pop))
     #[atoms.pop(i) for i in pop]
     #[indices.pop(i) for i in pop]
@@ -398,10 +400,11 @@ if __name__ == '__main__':
                     if not molecules_sc[molecule] and not args.nonsc_weight: continue
                     
                     m_form = atoms[molecules[molecule][0]].get_chemical_formula()
+                    m_sym = atoms[molecules[molecule][0]].symbols
                     if args.testmol:
                         if not ( (args.testmol == m_form) or (args.testmol in molecule) ):
                             continue
-                    if m_form in skips:
+                    if (m_form in skips) or (m_sym in skips) or (m_idx in molecules[molecule]):
                         print("SKIPPING: ", molecule)
                         continue
                     mol_sc = True

@@ -153,7 +153,9 @@ if __name__ == '__main__':
 
 
     print("READING DATASET")
-    dataset = MemDatasetRead(args.datapath, skip=pop)
+
+    #dataset = MemDatasetRead(args.datapath, skip=pop)
+    dataset = MemDatasetRead(args.datapath, skip=[])
     dataset_train = dataset
 
     print("LOADING DATASET INTO PYTORCH")

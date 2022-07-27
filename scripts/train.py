@@ -259,7 +259,7 @@ if __name__ == '__main__':
     if args.testrun:
         print("\n ======= Starting testrun ====== \n\n")
         with open(logpath+'testrun.dat', 'w') as f:
-            f.write('#IDX\t FORMULA\t SYMBOLS\t E_PRETRAINED_MODEL\t CONVERGENCE SC\n')
+            f.write('#IDX\t FORMULA\t SYMBOLS\t E_PRETRAINED_MODEL\t CONVERGENCE\t SC\n')
 
         #Set SCF Object training flag off
         scf.xc.evaluate()
@@ -446,12 +446,19 @@ if __name__ == '__main__':
                         #but everything after dm_init contained in matrices now
                         dm_init = data[0]
                         matrices = data[1]
+
+                        #LOAD REFERENCE ENERGIES
+                        #For atoms in G2/97 set, this will be the atomization energy
+                        #For pure atoms, this will be the total energy.
+                        #For atoms in the BH76 dataset/other reactions, this is the reaction height for the end atom
+                        #----> If atom is in a reaction and not the final result, this will be zero.
                         try:
                             #previous prep_data had different keys for the matrix values
                             e_ref = matrices['e_base']
                         except KeyError:
                             print("Wrong key, trying Etot from matrices")
                             e_ref = matrices['Etot']
+
 
                         #get ref dm, send extracted values to device
                         dm_ref = matrices['dm']
@@ -467,6 +474,7 @@ if __name__ == '__main__':
                             mixing = torch.rand(1)*0
                         else:
                             mixing = torch.rand(1)/2 + 0.5
+                        
                         sc = atoms[idx].info.get('sc',True)
 
                         #mix dms if not converged/if sc
@@ -519,11 +527,19 @@ if __name__ == '__main__':
                         results['rho'] = matrices['rho']
                         results['ao_eval'] = matrices['ao_eval']
                         results['grid_weights'] = matrices['grid_weights']
+
+                        #want to enforce energy accuracy -- need to include ccsdt energy in the loss
+                        #results not used in atm_loss, so can modify safely here
+                        e_calc = atoms[idx].info.get('e_calc', None)
+                        results['e_calc'] = e_calc if e_calc else e_ref
                         results['E_ref'] = e_ref
+
                         results['mo_energy_ref'] = matrices['mo_energy']
                         results['n_elec'] = matrices['n_elec']
                         results['e_ip_ref'] = matrices['e_ip']
                         results['mo_occ'] = matrices['mo_occ']
+
+
                         print("RESULTS MATRICES EXTRACTED")
                         print("================================")
                         print("RESULTS MATRICES SHAPES")

@@ -549,7 +549,7 @@ if __name__ == '__main__':
                                 continue
                             elif k == "e_calc":
                                 print(results[k])
-                            else;
+                            else:
                                 print("{}   ---   {}".format(k, v.shape))
                         print("================================")
 

@@ -547,7 +547,10 @@ if __name__ == '__main__':
                             if k == 'fcenter':
                                 #chance this isn't in matrices, so None in results, so just skip
                                 continue
-                            print("{}   ---   {}".format(k, v.shape))
+                            elif k == "e_calc":
+                                print(results[k])
+                            else;
+                                print("{}   ---   {}".format(k, v.shape))
                         print("================================")
 
                         #If radical, multiplicative factor

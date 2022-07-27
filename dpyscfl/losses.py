@@ -26,7 +26,11 @@ def energy_loss(results, loss, **kwargs):
         [?]: loss function called on dE, depends on loss function
     """
     E = results['E']
-    E_ref = results['E_ref']
+    #If e_calc in results, use calculated energy instead of the e_ref, which may be atomization
+    try:
+        E_ref = results['e_calc']
+    except:
+        E_ref = results['E_ref']
     weights = kwargs.get('weights', torch.linspace(0,1,E.size()[0])**2).to(results['E'].device)
     skip_steps = kwargs.get('skip_steps',0)
 

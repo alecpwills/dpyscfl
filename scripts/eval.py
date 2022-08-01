@@ -380,6 +380,8 @@ if __name__ == '__main__':
             if len(subs) == 1:
                 #single atom, no atomization needed
                 print("SINGLE ATOM -- NO ATOMIZATION CALCULATION.")
+                results['atm'] = np.nan
+                pred_atm[idx] = [formula, results['atm']]
             else:
                 print("{} ({}) decomposition -> {}".format(formula, start, subs))
                 for s in subs:
@@ -435,6 +437,7 @@ if __name__ == '__main__':
         if idx == 0:
             with open(args.writepath+'/table.dat', 'w') as f:
                 f.write(writelab)
+                f.write(writestr)
         else:
             with open(args.writepath+'/table.dat', 'a') as f:
                 f.write(writestr)

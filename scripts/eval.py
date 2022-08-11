@@ -259,6 +259,12 @@ if __name__ == '__main__':
     atomsp = os.path.join(args.refpath, args.reftraj)
     print("READING TESTING TRAJECTORY: {}".format(atomsp))
     atoms = read(atomsp, ':')
+    e_refs = []
+    for idx, at in enumerate(atoms):
+        if len(at.positions) > 1:
+            e_refs.append(at.info['energy']/scale)
+        else:
+            e_refs.append(at.calc.results['energy'])
     e_refs = [a.info['energy']/scale for a in atoms]
     indices = np.arange(len(atoms)).tolist()
     

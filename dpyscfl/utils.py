@@ -512,9 +512,15 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
         dm_init = dm_base
         print("REF, NONFRAC SHAPES: DM_GUESS = {}, DM_BASE = {}".format(dm_guess.shape, dm_init.shape))
         #TODO: Amend the way this is done
+        print("Reading in reference target energy. Current: {}".format(e_base))
         e_base = read(os.path.join(ref_path, 'results.traj'), ref_index).calc.results['energy']
+        e_base = read(os.path.join(ref_path, 'results.traj'), ref_index).info['target_energy']
+        e_calc = read(os.path.join(ref_path, 'results.traj'), ref_index).info['calc_energy']
+        
+
+        print("Reading in reference target energy. Post-read: {}".format(e_base))
         #e_base =  (pd.read_csv(ref_path + '/energies', delim_whitespace=True,header=None,index_col=0).loc[ref_index]).values.flatten()[0]
-        features.update({'dm':dm_base, 'dm_init':dm_guess, 'e_base':e_base})
+        features.update({'dm':dm_base, 'dm_init':dm_guess, 'e_base':e_base, 'e_calc':e_calc})
 
     if grid_level:
         print("GRID GENERATION.")
@@ -548,7 +554,13 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
         #                 'grid_weights':mf.grids.weights})
         features.update({'rho':rho})
 
+    print('PRE-UPDATED MATRICES E_BASE, FEATURES')
+    print(matrices['e_base'])
+    print(features['e_base'])
     matrices.update(features)
+    print("POST-UPDATE matrices -> features")
+    print(matrices['e_base'])
+
 
     print("================================")
     print("GET DATAPOINT MATRICES SHAPES")

@@ -428,12 +428,14 @@ if __name__ == '__main__':
                     loss = 0
                     #subset Dataset so that we don't have to load unnecessary data during one molecule step
                     #previously, this looped over the entire Dataset and matched indices contained in molecule list
-                    print("Subsetting Dataset with molecules[{}]: ".format(molecule), molecules[molecule])
-                    subset = torch.utils.data.Subset(dataset, molecules[molecule])
-                    subset_loader = torch.utils.data.DataLoader(subset, batch_size=1, shuffle=False)
-                    #for idx, data in enumerate(dataloader_train):
-                    for didx, data in enumerate(subset_loader):
-                        idx = molecules[molecule][didx]
+                    
+                    #TEST: loop over everything, not subset
+                    #print("Subsetting Dataset with molecules[{}]: ".format(molecule), molecules[molecule])
+                    #subset = torch.utils.data.Subset(dataset, molecules[molecule])
+                    #subset_loader = torch.utils.data.DataLoader(subset, batch_size=1, shuffle=False)
+                    for idx, data in enumerate(dataloader_train):
+                    #for didx, data in enumerate(subset_loader):
+                        #idx = molecules[molecule][didx]
                         if idx == 0:
                             print(idx, data[1].keys())
                         #modify loading bar for descriptive progress during training
@@ -653,6 +655,15 @@ if __name__ == '__main__':
                         #add losses*loss_weight from dictionary
                         loss += sum([losses_eval[key]*losses[key][1] for key in losses])
                         print(loss)
+                        with open(logpath+'_evalloss.dat', 'a') as f:
+                            atform = atoms[idx].get_chemical_formula()
+                            atsym = atoms[idx].symbols
+                            wstr = '{}\t{}\t{}\t'.format(epoch, atform, atsym)
+                            keys = list(losses_eval.keys())
+                            for k in keys:
+                                wstr += '{}\t{}\t'.format(k, losses_eval[k])
+                            wstr+='\n'
+                            f.write(wstr)
                     if not results:
                         continue
                     
@@ -661,7 +672,10 @@ if __name__ == '__main__':
                     print("PRED_DICT: ", pred_dict)
                     ael = ae_loss(ref_dict,pred_dict)
                     running_losses['ae'] += ael.item()
-                    print('AE loss', ael.item())
+                    aelstr = 'AE loss\t {} \t {} \t {} \t {} \t {}\n'.format(epoch, m_idx, m_form, m_sym, ael.item())
+                    print(aelstr)
+                    with open(logpath+'_aeloss.dat', 'a') as f:
+                        f.write(aelstr)
                     if mol_sc:
                         running_losses['ae'] += ael.item()
                         loss += ael
@@ -702,19 +716,17 @@ if __name__ == '__main__':
             for i in fails:
                 print(i)
             print("++++++++++++++++++++++++++++++++++")
-
+            if epoch == 0:
+                with open(logpath+'_totallosses.dat', 'w') as f:
+                    wstr = "#\tEpoch\tE\trho\tae\ttotal\n"
+                    f.write(wstr)
             running_losses = {key:np.sqrt(running_losses[key]/len(molecules))*1000 for key in running_losses}
             total_loss = np.sqrt(total_loss/len(molecules))*1000
+            with open(logpath+'_totallosses.dat', 'a') as f:
+                wstr = "{}\t{}\t{}\t{}\t{}\n".format(epoch, running_losses['E'], running_losses['rho'], running_losses['ae'], total_loss)
+                f.write(wstr)
             best_loss = min(total_loss, best_loss)
             chkpt_str = ''
-            torch.save(scf.xc.state_dict(), logpath + '_current.chkpt')
-            torch.save(scf, logpath + '_current.pt')
-            if total_loss == best_loss:
-                torch.save(scf.xc.state_dict(), logpath + '_{}.chkpt'.format(chkpt_idx%3))
-                torch.save(scf, logpath + '_{}.pt'.format(chkpt_idx%3))
-                torch.save(optimizer.state_dict(), logpath + '_{}.adam.chkpt'.format(chkpt_idx%3))
-                chkpt_str = '_{}.chkpt'.format(chkpt_idx%3)
-                chkpt_idx += 1
             print("============================================================")
             print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
             print('Epoch {} ||'.format(epoch), [' {} : {:.6f}'.format(key,val) for key, val in running_losses.items()],
@@ -724,5 +736,13 @@ if __name__ == '__main__':
                 print(scf.xc.exx_a)
             print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
             print("============================================================")
+            torch.save(scf.xc.state_dict(), logpath + '_current.chkpt')
+            torch.save(scf, logpath + '_current.pt')
+            if total_loss == best_loss:
+                torch.save(scf.xc.state_dict(), logpath + '_{}.chkpt'.format(chkpt_idx%3))
+                torch.save(scf, logpath + '_{}.pt'.format(chkpt_idx%3))
+                torch.save(optimizer.state_dict(), logpath + '_{}.adam.chkpt'.format(chkpt_idx%3))
+                chkpt_str = '_{}.chkpt'.format(chkpt_idx%3)
+                chkpt_idx += 1
 
             scheduler.step(total_loss)

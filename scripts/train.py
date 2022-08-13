@@ -436,7 +436,16 @@ if __name__ == '__main__':
                     for idx, data in enumerate(dataloader_train):
                     #for didx, data in enumerate(subset_loader):
                         #idx = molecules[molecule][didx]
-                        if idx == 0:
+
+                        #skip non-relevant atoms for current calculation
+                        if idx not in molecule:
+                            print("Irrelevant index {}. Skipping to next.".format(idx))
+                            continue
+                        if idx in pop:
+                            print("Skipping index {} -- in pop, irrelevant molecule.".format(idx))
+                            continue
+
+                        if idx == molecule[0]:
                             print(idx, data[1].keys())
                         #modify loading bar for descriptive progress during training
                         t.set_postfix({"Epoch": epoch, 'Training Label':molecule, 'Molecules': [atoms[idx].get_chemical_formula() for idx in molecules[molecule]],

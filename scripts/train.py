@@ -145,7 +145,7 @@ if __name__ == '__main__':
     #skips = ['O2', 'Cl2', 'HCl']
     #skips = ['O2']
     skips = []
-#    pop = []
+    #pop = []
     pop = [34, 33, 32, 10, 7, 5]
 
     #print("popping specified atoms: {}".format(pop))
@@ -410,6 +410,7 @@ if __name__ == '__main__':
                     print('--------------{}----------------'.format(m_idx))
                     print("TRAINING ON MOLECULE: ", molecule)
                     print("SUBMOLECULES: {}".format(submolecules))
+                    print("SUBMOLECULE INDICES: {}".format(molecules[molecule]))
                     print("================================")
                     #if molecule not self-consistent and the weight associated to nonsc molecules is 0, skip it
                     if not molecules_sc[molecule] and not args.nonsc_weight: continue

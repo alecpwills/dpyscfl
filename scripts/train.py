@@ -438,7 +438,7 @@ if __name__ == '__main__':
                         #idx = molecules[molecule][didx]
 
                         #skip non-relevant atoms for current calculation
-                        if idx not in molecule:
+                        if idx not in molecules[molecule]:
                             print("Irrelevant index {}. Skipping to next.".format(idx))
                             continue
                         if idx in pop:

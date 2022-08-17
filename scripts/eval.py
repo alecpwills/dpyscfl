@@ -42,6 +42,7 @@ parser.add_argument('--gridlevel', action='store', type=int, default=5, help='gr
 parser.add_argument('--maxcycle', action='store', type=int, default=50, help='limit to scf cycles')
 parser.add_argument('--atomization', action='store_true', default=False, help="If flagged, does atomization energies as well as total energies.")
 parser.add_argument('--atmflip', action='store_true', default=False, help="If flagged, does reverses reference atomization energies sign")
+parser.add_argument('--rho', action='store_true', default=False, help='If flagged, calculate rho loss')
 args = parser.parse_args()
 
 scale = 1

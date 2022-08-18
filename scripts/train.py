@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+#meant for use on local machine for ease of changes without git pulls/commits
 from unittest import skip
 import torch
 torch.autograd.set_detect_anomaly(True)
@@ -41,6 +42,7 @@ parser.add_argument('--n_hidden', metavar='n_hidden', type=int, default=16, help
 parser.add_argument('--hyb_par', metavar='hyb_par', type=float, default=0.0, help='Hybrid mixing parameter (0.0)')
 parser.add_argument('--E_weight', metavar='e_weight', type=float, default=0.01, help='Weight of total energy term in loss function (0)')
 parser.add_argument('--rho_weight', metavar='rho_weight', type=float, default=20, help='Weight of density term in loss function (25)')
+parser.add_argument('--ae_weight', metavar='ae_weight', type=float, default=1, help='Weight of AE term in loss function (1)')
 parser.add_argument('--modelpath', metavar='modelpath', type=str, default='', help='Net Checkpoint location to continue training')
 parser.add_argument('--optimpath', metavar='optimpath', type=str, default='', help='Optimizer Checkpoint location to continue training')
 parser.add_argument('--logpath', metavar='logpath', action='store', type=str, default='log/', help='Logging directory (log/)')
@@ -146,6 +148,8 @@ if __name__ == '__main__':
     #skips = ['O2']
     skips = []
     #pop = []
+    
+    #xcdiff pops
     pop = [34, 33, 32, 10, 7, 5]
 
     #print("popping specified atoms: {}".format(pop))
@@ -233,6 +237,7 @@ if __name__ == '__main__':
 
 
     #a_count = {idx: len(at.positions) for idx,at in enumerate(atoms)}
+    #count number of times each standalone atom/molecule appears in dataset -- most things are just once, but the single atoms appear in larger molecules so count more
     a_count = {a: np.sum([a in molecules[mol] for mol in molecules]) for a in np.unique([m  for mol in molecules for m in molecules[mol]])}
 
     print("MOLECULES TO TRAIN ON")
@@ -357,8 +362,6 @@ if __name__ == '__main__':
     skip_steps = max(5, args.scf_steps - 10)
 
     optimizer, scheduler = get_optimizer(scf, path=args.optimpath)
-
-    AE_mult = 1
 
     #Loss Functions -- Density
     density_loss = rho_alt_loss if args.rho_alt else rho_loss
@@ -671,7 +674,7 @@ if __name__ == '__main__':
                             wstr = '{}\t{}\t{}\t'.format(epoch, atform, atsym)
                             keys = list(losses_eval.keys())
                             for k in keys:
-                                wstr += '{}\t{}\t'.format(k, losses_eval[k])
+                                wstr += '{}\t{}\t'.format(k, losses_eval[k]*losses[k][1])
                             wstr+='\n'
                             f.write(wstr)
                     if not results:
@@ -682,13 +685,13 @@ if __name__ == '__main__':
                     print("PRED_DICT: ", pred_dict)
                     ael = ae_loss(ref_dict,pred_dict)
                     running_losses['ae'] += ael.item()
-                    aelstr = 'AE loss\t {} \t {} \t {} \t {} \t {}\n'.format(epoch, m_idx, m_form, m_sym, ael.item())
+                    aelstr = 'AE loss\t {} \t {} \t {} \t {} \t {}\n'.format(epoch, m_idx, m_form, m_sym, args.ae_weight*ael.item())
                     print(aelstr)
                     with open(logpath+'_aeloss.dat', 'a') as f:
                         f.write(aelstr)
                     if mol_sc:
-                        running_losses['ae'] += ael.item()
-                        loss += ael
+                        running_losses['ae'] += ael.item() * args.ae_weight
+                        loss += ael * args.ae_weight
                     else:
                         loss += args.nonsc_weight * ael
                         running_losses['ae'] += args.nonsc_weight * ael.item()
@@ -733,19 +736,11 @@ if __name__ == '__main__':
             running_losses = {key:np.sqrt(running_losses[key]/len(molecules))*1000 for key in running_losses}
             total_loss = np.sqrt(total_loss/len(molecules))*1000
             with open(logpath+'_totallosses.dat', 'a') as f:
-                wstr = "{}\t{}\t{}\t{}\t{}\n".format(epoch, running_losses['E'], running_losses['rho'], running_losses['ae'], total_loss)
+                wstr = "{}\t{}\t{}\t{}\t{}\n".format(epoch, running_losses['E']*args.E_weight, running_losses['rho']*args.rho_weight, running_losses['ae']*args.ae_weight, total_loss)
                 f.write(wstr)
             best_loss = min(total_loss, best_loss)
-            chkpt_str = ''
-            print("============================================================")
-            print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-            print('Epoch {} ||'.format(epoch), [' {} : {:.6f}'.format(key,val) for key, val in running_losses.items()],
-                  '|| total loss {:.6f}'.format(total_loss),chkpt_str)
-            if HYBRID:
-                print("HYB MIXING:")
-                print(scf.xc.exx_a)
-            print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-            print("============================================================")
+            chkpt_str = 'NOUPDATE'
+            pt_str = 'NOUPDATE'
             torch.save(scf.xc.state_dict(), logpath + '_current.chkpt')
             torch.save(scf, logpath + '_current.pt')
             if total_loss == best_loss:
@@ -753,6 +748,15 @@ if __name__ == '__main__':
                 torch.save(scf, logpath + '_{}.pt'.format(chkpt_idx%3))
                 torch.save(optimizer.state_dict(), logpath + '_{}.adam.chkpt'.format(chkpt_idx%3))
                 chkpt_str = '_{}.chkpt'.format(chkpt_idx%3)
+                pt_str = '_{}.pt'.format(chkpt_idx%3)
                 chkpt_idx += 1
-
+            print("============================================================")
+            print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+            print('Epoch {} ||'.format(epoch), [' {} : {:.6f}'.format(key,val) for key, val in running_losses.items()],
+                  '|| total loss {:.6f} || CHKPT: {}'.format(total_loss, pt_str))
+            if HYBRID:
+                print("HYB MIXING:")
+                print(scf.xc.exx_a)
+            print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+            print("============================================================")
             scheduler.step(total_loss)

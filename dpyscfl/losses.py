@@ -111,6 +111,7 @@ def rho_loss(results, loss, **kwargs):
         #drho = torch.sqrt(torch.sum((rho-rho_ref)**2*results['grid_weights'])/results['n_elec'][0,0]**2)
         drho = torch.sqrt(torch.sum((rho-rho_ref)**2*results['grid_weights'])/results['n_elec'][0]**2)
         if torch.isnan(drho):
+            print("NAN IN RHO LOSS. SETTING DRHO ZERO.")
             drho = torch.Tensor([0])
         lrho = loss(drho, torch.zeros_like(drho))
 
@@ -124,6 +125,7 @@ def rho_loss(results, loss, **kwargs):
             drho = torch.sqrt(torch.sum((rho[0]-rho_ref[0])**2*results['grid_weights'])/torch.sum(results['mo_occ'][0,0])**2 +\
                    torch.sum((rho[1]-rho_ref[1])**2*results['grid_weights'])/torch.sum(results['mo_occ'][0,1])**2)
         if torch.isnan(drho):
+            print("NAN IN RHO LOSS. SETTING DRHO ZERO.")
             drho = torch.Tensor([0])
         lrho = loss(drho, torch.zeros_like(drho))
     return lrho

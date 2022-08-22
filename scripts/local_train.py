@@ -118,7 +118,8 @@ def get_optimizer(model, path='', hybrid=HYBRID):
 
 if __name__ == '__main__':
 
-    logpath = os.path.join(args.logpath, str(datetime.now()).replace(' ','_'))
+    timestamp = str(datetime.now()).replace(' ','_')
+    logpath = os.path.join(args.logpath, timestamp)
 
     if not args.print_stdout:
         def print(*args):
@@ -757,7 +758,7 @@ if __name__ == '__main__':
                     esuff = '_e0{}'.format(epoch) if epoch < 10 else '_e{}'.format(epoch)
                     dirstr = os.path.join(args.targetdir, dirstr+esuff)
 
-                    savept = logpath+pt_str
+                    savept = timestamp+pt_str
                     savef = os.path.join(dirstr, savept)
                     savexc = os.path.join(dirstr, 'xc')
                     #make dir if not exist, otherwise assume exists and don't do anything

@@ -758,8 +758,8 @@ if __name__ == '__main__':
                     dirstr = os.path.join(args.targetdir, dirstr+esuff)
 
                     savept = logpath+pt_str
-                    savef = os.path.join(args.targetdir, savept)
-                    savexc = os.path.join(args.targetdir, 'xc')
+                    savef = os.path.join(dirstr, savept)
+                    savexc = os.path.join(dirstr, 'xc')
                     #make dir if not exist, otherwise assume exists and don't do anything
                     try:
                         print("os.mkdir({})".format(dirstr))

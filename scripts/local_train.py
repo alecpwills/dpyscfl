@@ -70,6 +70,7 @@ parser.add_argument('--checkgrad', action='store_true', default=False, help='If 
 parser.add_argument('--testmol', type=str, action='store', default='', help='If specified, give symbols/formula/test label for debugging purpose')
 parser.add_argument('--torchtype', type=str, default='float', help='float or double')
 parser.add_argument('--testall', action='store_true', default=False, help='If flagged, forces testing of entire training set.')
+parser.add_argument('--targetdir', action='store', type=str, default='', help='Directory in which to store checkpoint files during training.')
 args = parser.parse_args()
 
 ttypes = {'float' : torch.float,
@@ -750,6 +751,35 @@ if __name__ == '__main__':
                 chkpt_str = '_{}.chkpt'.format(chkpt_idx%3)
                 pt_str = '_{}.pt'.format(chkpt_idx%3)
                 chkpt_idx += 1
+                if args.targetdir:
+                    #targetdir specified, generate checkpoints here in MODEL_folders
+                    dirstr = 'MODEL_{}'.format(args.type)
+                    esuff = '_e0{}'.format(epoch) if epoch < 10 else '_e{}'.format(epoch)
+                    dirstr = dirstr+esuff
+
+                    savept = logpath+pt_str
+                    savef = os.path.join(args.targetdir, savept)
+                    savexc = os.path.join(args.targetdir, 'xc')
+                    #make dir if not exist, otherwise assume exists and don't do anything
+                    try:
+                        print("os.mkdir({})".format(dirstr))
+                        os.mkdir(dirstr)
+                    except:
+                        e = sys.exc_info()[0]
+                        print(e)
+                        #if directory exists, move on
+                        pass
+                    try:
+                        print("torch saving pt:")
+                        torch.save(scf, savef)
+                        print('os.symlink: {} -> {}'.format(savef, savexc))
+                        os.symlink(savef, savexc)
+                    except:
+                        e = sys.exc_info()[0]
+                        print(e)
+                        #either directory exists or file does not yet exist
+                        pass
+
             print("============================================================")
             print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
             print('Epoch {} ||'.format(epoch), [' {} : {:.6f}'.format(key,val) for key, val in running_losses.items()],

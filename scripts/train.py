@@ -755,7 +755,7 @@ if __name__ == '__main__':
                     #targetdir specified, generate checkpoints here in MODEL_folders
                     dirstr = 'MODEL_{}'.format(args.type)
                     esuff = '_e0{}'.format(epoch) if epoch < 10 else '_e{}'.format(epoch)
-                    dirstr = dirstr+esuff
+                    dirstr = os.path.join(args.targetdir, dirstr+esuff)
 
                     savept = logpath+pt_str
                     savef = os.path.join(args.targetdir, savept)

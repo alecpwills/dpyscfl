@@ -48,7 +48,7 @@ parser.add_argument('--optimpath', metavar='optimpath', type=str, default='', he
 parser.add_argument('--logpath', metavar='logpath', action='store', type=str, default='log/', help='Logging directory (log/)')
 parser.add_argument('--testrun', action='store_true', help='Do a test run over all molecules before training')
 parser.add_argument('--lr', metavar='lr', type=float, action='store', default=0.0001, help='Learning rate (0.0001)')
-parser.add_argument('--l2', metavar='l2', type=float, default=1e-8, help='Weight decay (1e-8)')
+parser.add_argument('--l2', metavar='l2', type=float, default=1e-6, help='Weight decay (1e-8)')
 parser.add_argument('--hnorm', action='store_true', help='Use H energy and density in loss')
 parser.add_argument('--print_stdout', action='store_true', help='Print to stdout instead of logfile')
 parser.add_argument('--print_names', action='store_true', help='Print molecule names during training')

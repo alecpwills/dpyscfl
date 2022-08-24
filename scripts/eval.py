@@ -461,7 +461,7 @@ if __name__ == '__main__':
             f.write("#Index \t Atom \t Atomization Energy (Hartree) \n")
             ks = sorted(list(pred_atm.keys()))
             for k in ks:
-                v = pred_e[k]
+                v = pred_atm[k]
                 f.write("{} \t {} \t {} \n".format(k, v[0], v[1]))
 
     with open(args.writepath+'/loss_dct_{}.pckl'.format(args.type), 'wb') as file:

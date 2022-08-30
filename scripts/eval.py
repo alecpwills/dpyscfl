@@ -49,6 +49,40 @@ scale = 1
 if args.evtohart:
     scale = Hartree
 
+def dm_to_rho(dm, ao_eval):
+    if len(dm.shape) == 2:
+        print("2D DM.")
+        rho = contract('ij,ik,jk->i',
+                           ao_eval, ao_eval, dm)
+    else:
+        print("NON-2D DM")
+        rho = contract('ij,ik,xjk->xi',
+                           ao_eval, ao_eval, dm)
+    return rho
+
+def rho_dev(dm, nelec, rho, rho_ref, grid_weights, mo_occ):
+    mo_occ = torch.Tensor(mo_occ)
+    if len(dm.shape) == 2:
+        print("2D DM.")
+        drho = torch.sqrt(torch.sum(torch.Tensor((rho-rho_ref)**2*grid_weights)/nelec**2))
+        if torch.isnan(drho):
+            print("NAN IN RHO LOSS. SETTING DRHO ZERO.")
+            drho = torch.Tensor([0])
+    else:
+        print("NON-2D DM")
+        rho = contract('ij,ik,xjk->xi',
+                           ao_eval, ao_eval, dm)
+        if torch.sum(mo_occ) == 1:
+            drho = torch.sqrt(torch.sum(torch.Tensor((rho[0]-rho_ref[0])**2*grid_weights)/torch.sum(mo_occ[0,0])**2))
+        else:
+            drho = torch.sqrt(torch.sum(torch.Tensor((rho[0]-rho_ref[0])**2*grid_weights))/torch.sum(mo_occ[0,0])**2 +\
+                   torch.sum(torch.Tensor((rho[1]-rho_ref[1])**2*grid_weights))/torch.sum(mo_occ[0,1])**2)
+        if torch.isnan(drho):
+            print("NAN IN RHO LOSS. SETTING DRHO ZERO.")
+            drho = torch.Tensor([0])
+    return drho
+
+
 def KS(mol, method, model_path='', nxc_kind='grid', **kwargs):
     """ Wrapper for the pyscf RKS and UKS class
     that uses a libnxc functionals
@@ -317,9 +351,14 @@ if __name__ == '__main__':
     pred_dct = {'E':[], 'dm':[], 'mo_e':[]}
     pred_e = {idx:0 for idx in range(len(atoms))}
     pred_dm = {idx:0 for idx in range(len(atoms))}
+    ao_evals = {idx:0 for idx in range(len(atoms))}
+    mo_occs = {idx:0 for idx in range(len(atoms))}
+    mfs = {idx:0 for idx in range(len(atoms))}
+    nelecs = {idx:0 for idx in range(len(atoms))}
     loss = torch.nn.MSELoss()
 #    loss_dct = {k: 0 for k,v in ref_dct.items()}
-    loss_dct = {"E":0}
+    loss_dct = {"E":0, 'rho':0}
+    rho_errs = {'rho':[]}
     if args.atomization:
         pred_atm = {idx:0 for idx in range(len(atoms))}
         ref_dct['atm'] = []
@@ -365,22 +404,36 @@ if __name__ == '__main__':
             _, method = gen_mf_mol(mol, xc='notnull', grid_level=args.gridlevel, nxc=True)
             mf = KS(mol, method, model_path=args.modelpath)
             mf.grids.level = args.gridlevel
+            mf.build()
             mf.density_fit()
             mf.max_cycle = args.maxcycle
             mf.kernel()
+            ao_eval = mf._numint.eval_ao(mol, mf.grids.coords)
             e_pred = mf.e_tot
             dm_pred = mf.make_rdm1()
+            rho_pred = dm_to_rho(dm_pred, ao_eval)
             pred_e[idx] = [formula, e_pred]
             pred_dm[idx] = [formula, dm_pred]
+            ao_evals[idx] = ao_eval
+            mo_occs[idx] = mf.mo_occ
+            mfs[idx] = mf
+            nelecs[idx] = mol.nelectron
 
 
             results['E'] = e_pred
             results['dm'] = dm_pred
 
         dmp = os.path.join(args.refpath, '{}_{}.dm.npy'.format(idx, symbols))
-        dm_ref = np.load(dmp)        
+        dm_ref = np.load(dmp)
         e_ref = e_refs[idx]
+        rho_ref = dm_to_rho(dm_ref, ao_evals[idx])
 
+        rho_pred = dm_to_rho(pred_dm[idx][1], ao_evals[idx])
+
+        rho_err = rho_dev(pred_dm[idx][1], nelecs[idx], rho_pred, rho_ref, mfs[idx].grids.weights, mo_occs[idx])
+        rho_errs['rho'].append(rho_err)
+        print("Rho Error: ", rho_err)
+        
         if args.atomization:
             start = e_pred
             subs = atom.get_chemical_symbols()
@@ -424,23 +477,29 @@ if __name__ == '__main__':
 
         for key in loss_dct.keys():
             print(key)
-            rd = torch.Tensor(ref_dct[key])
-            pd = torch.Tensor(pred_dct[key])
+            if key == 'rho':
+                rd = torch.zeros_like(torch.Tensor(rho_errs['rho']))
+                pd = torch.Tensor(rho_errs['rho'])
+            else:
+                rd = torch.Tensor(ref_dct[key])
+                pd = torch.Tensor(pred_dct[key])
             loss_dct[key] = loss(rd, pd)
         
+        loss_dct['rho'] = rho_err
+
         print("+++++++++++++++++++++++++++++++")
         print("RUNNING LOSS")
         print(loss_dct)
         print("+++++++++++++++++++++++++++++++")
 
         if args.atomization:
-            writelab = '#Index \t Atom \t EPred (H) \t ERef (H) \t EErr (H) \t EPAtm (H) \t ERAtm (H) \t EAErr (H)\n'
-            writestr = '{} \t {} \t {} \t {} \t {} \t {} \t {} \t {}\n'.format(idx, formula, \
-                results['E'], e_ref, results['E']-e_ref, results['atm'], ref_atm[idx], results['atm'] - ref_atm[idx])
+            writelab = '#Index \t Atom \t EPred (H) \t ERef (H) \t EErr (H) \t RhoErr \t EPAtm (H) \t ERAtm (H) \t EAErr (H)\n'
+            writestr = '{} \t {} \t {} \t {} \t {} \t {} \t {} \t {} \t {}\n'.format(idx, formula, \
+                results['E'], e_ref, results['E']-e_ref, rho_err, results['atm'], ref_atm[idx], results['atm'] - ref_atm[idx])
         else:
-            writelab = '#Index \t Atom \t EPred (H) \t ERef (H) \t EErr (H)\n'
-            writestr = '{} \t {} \t {} \t {} \t {}\n'.format(idx, formula, \
-                results['E'], e_ref, results['E']-e_ref)
+            writelab = '#Index \t Atom \t EPred (H) \t ERef (H) \t EErr (H) \t RhoErr \n'
+            writestr = '{} \t {} \t {} \t {} \t {} \t {}\n'.format(idx, formula, \
+                results['E'], e_ref, results['E']-e_ref, rho_err)
         if idx == 0:
             with open(args.writepath+'/table.dat', 'w') as f:
                 f.write(writelab)

@@ -211,10 +211,10 @@ if __name__ == '__main__':
             #generates pyscf mol, default basis 6-311++G(3df,2pd), charge=0, spin=None
             atomic_mol = [ase_atoms_to_mol(at, basis=args.basis, spin=None, charge=0) for at in atomic]
             if args.forceUKS:
-                pol = True
+                ipol = True
             else:
-                pol = False
-            atomic_method = [gen_mf_mol(mol[1], xc='notnull', pol=True, grid_level=args.gridlevel, nxc=True) for mol in atomic_mol]
+                ipol = False
+            atomic_method = [gen_mf_mol(mol[1], xc='notnull', pol=ipol, grid_level=args.gridlevel, nxc=True) for mol in atomic_mol]
             for idx, methodtup in enumerate(atomic_method):
                 print(idx, methodtup)
                 name, mol = atomic_mol[idx]
@@ -323,7 +323,11 @@ if __name__ == '__main__':
                 fails.append((idx, formula))
                 continue
             name, mol = ase_atoms_to_mol(atom, basis=args.basis, spin=None, charge=0)
-            _, method = gen_mf_mol(mol, xc='notnull', grid_level=args.gridlevel, nxc=True)
+            if args.forceUKS:
+                ipol = True
+            else:
+                ipol = False
+            _, method = gen_mf_mol(mol, xc='notnull', pol=ipol, grid_level=args.gridlevel, nxc=True)
             if args.modelpath:
                 mf = KS(mol, method, model_path=args.modelpath)
             else:

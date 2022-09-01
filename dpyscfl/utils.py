@@ -223,7 +223,14 @@ def gen_mf_mol(mol, xc='', pol=False, grid_level = None, nxc = False):
     else:
         dftns = dft
         hfns = scf
-    if (mol.spin == 0 and not pol):
+    if (mol.atom_coords().shape[0] == 1):
+        #single atoms are spin polarized
+        print("Single Atom -- UKS")
+        if xc:
+            method = dftns.UKS
+        else:
+            method = hfns.UHF
+    elif (mol.spin == 0 and not pol):
         #if zero spin and we specifically don't want spin-polarized
         #or if just neutral H atom
         if xc:

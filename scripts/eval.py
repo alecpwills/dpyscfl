@@ -240,11 +240,29 @@ def eval_wrap(atomspath, refdatpath, modelpath, evalinds=[]):
             fails.append((idx, formula))
             continue
         name, mol = ase_atoms_to_mol(atom)
-        _, method = gen_mf_mol(mol, xc='notnull', grid_level=grid_level, nxc=True)
-        mf = KS(mol, method, model_path=model_path)
+        if args.modelpath:
+            _, method = gen_mf_mol(mol, xc='notnull', grid_level=grid_level, nxc=True)
+            mf = KS(mol, method, model_path=model_path)
+        else:
+            _, method = gen_mf_mol(mol, xc=args.xc, grid_level=grid_level, nxc=False)
+            print("Atomic Method: ", method)
+            mf = method(mol)
+            mf.xc = args.xc
         mf.grids.level = grid_level
         mf.density_fit()
         mf.kernel()
+        if not args.modelpath:
+            #if straight pyscf calc, and not converged, try again as PBE start
+            if not mf.converged:
+                print("Calculation did not converge. Trying second order convergence with PBE to feed into calculation.")
+                mfp = method(mol, xc='pbe').newton()
+                mfp.kernel()
+                print("PBE Calculation complete -- feeding into original kernel.")
+                mf.kernel(dm0 = mfp.make_rdm1())
+                if not mf.converged:
+                    print("Convergence still failed -- {}".format(atom.symbols))
+                    #overwrite to just use pbe energy.
+                    mf = mfp
         e_pred = mf.e_tot
         dm_pred = mf.make_rdm1()
 
@@ -285,6 +303,9 @@ def eval_wrap(atomspath, refdatpath, modelpath, evalinds=[]):
 
 
 if __name__ == '__main__':
+    with open('unconv','w') as ucfile:
+        ucfile.write('#idx\tatoms.symbols\txc_fail\txc_fail_en\txc_bckp\txc_bckp_en\n')
+
     if args.writeeach:
         try:
             os.mkdir(os.path.join(args.writepath, args.writeeach))
@@ -323,17 +344,42 @@ if __name__ == '__main__':
             atomic = list(set(atomic))
             atomic_e = {s:0 for s in atomic}
             atomic = [Atoms(symbols=s) for s in atomic]
-            atomic_mol = [ase_atoms_to_mol(at) for at in atomic]
+            #generates pyscf mol, default basis 6-311++G(3df,2pd), charge=0, spin=None
+            atomic_mol = [ase_atoms_to_mol(at, basis=args.basis, spin=None, charge=0) for at in atomic]
+
             atomic_method = [gen_mf_mol(mol[1], xc='notnull', grid_level=args.gridlevel, nxc=True) for mol in atomic_mol]
             for idx, methodtup in enumerate(atomic_method):
                 print(idx, methodtup)
                 name, mol = atomic_mol[idx]
                 method = methodtup[1]
-                mf = KS(mol, method, model_path=args.modelpath)
+                if args.modelpath:
+                    mf = KS(mol, method, model_path=args.modelpath)
+                else:
+                    mf = method(mol)
+                    mf.xc = args.xc
+                    
                 mf.grids.level = args.gridlevel
                 mf.max_cycle = args.maxcycle
                 mf.density_fit()
                 mf.kernel()
+                
+                if not args.modelpath:
+                    #if straight pyscf calc, and not converged, try again as PBE start
+                    if not mf.converged:
+                        print("Calculation did not converge. Trying second order convergence with PBE to feed into calculation.")
+                        mfp = method(mol, xc='pbe').newton()
+                        mfp.kernel()
+                        print("PBE Calculation complete -- feeding into original kernel.")
+                        mf.kernel(dm0 = mfp.make_rdm1())
+                        if not mf.converged:
+                            print("Convergence still failed -- {}".format(atomic[idx]))
+                            with open('unconv', 'a') as ucfile:
+                                ucfile.write('{}\t{}\t{}\t{}\t{}\t{}\n'.format(idx, atomic[idx], args.xc, mf.e_tot, 'pbe', mfp.e_tot))
+                            #overwrite to just use pbe energy.
+                            mf = mfp
+                            
+
+                
                 atomic_e[name] = mf.e_tot
                 print("++++++++++++++++++++++++")
                 print("Atomic Energy: {} -- {}".format(name, mf.e_tot))
@@ -355,6 +401,7 @@ if __name__ == '__main__':
     mo_occs = {idx:0 for idx in range(len(atoms))}
     mfs = {idx:0 for idx in range(len(atoms))}
     nelecs = {idx:0 for idx in range(len(atoms))}
+    gweights = {idx:0 for idx in range(len(atoms))}
     loss = torch.nn.MSELoss()
 #    loss_dct = {k: 0 for k,v in ref_dct.items()}
     loss_dct = {"E":0, 'rho':0}
@@ -379,6 +426,7 @@ if __name__ == '__main__':
         try:
             wep = os.path.join(args.writepath, args.writeeach)
             if args.writepred:
+                print("Attempting read in of previous results.\n{}".format(formula))
                 predep = os.path.join(wep, '{}_{}.pckl'.format(idx, symbols))
                 with open(predep, 'rb') as file:
                     results = pickle.load(file)
@@ -386,11 +434,18 @@ if __name__ == '__main__':
                 dm_pred = results['dm']
                 pred_e[idx] = [formula, e_pred]
                 pred_dm[idx] = [formula, dm_pred]
+                ao_evals[idx] = results['ao_eval']
+                mo_occs[idx] = results['mf.mo_occ']
+                #mfs[idx] = results['mf']
+                nelecs[idx] = results['nelec']
+                gweights[idx] = results['gweights']
+
 
                 print("Results found for {} {}".format(idx, symbols))
             else:
                 raise ValueError
         except FileNotFoundError:
+            print("No previous results found. Generating new data.")
             results = {}
             #manually skip for preservation of reference file lookups
 
@@ -400,14 +455,35 @@ if __name__ == '__main__':
                 print("SKIPPING")
                 fails.append((idx, formula))
                 continue
-            name, mol = ase_atoms_to_mol(atom)
+            name, mol = ase_atoms_to_mol(atom, basis=args.basis, spin=None, charge=0)
             _, method = gen_mf_mol(mol, xc='notnull', grid_level=args.gridlevel, nxc=True)
-            mf = KS(mol, method, model_path=args.modelpath)
+            if args.modelpath:
+                mf = KS(mol, method, model_path=args.modelpath)
+            else:
+                mf = method(mol)
+                mf.xc = args.xc
             mf.grids.level = args.gridlevel
-            mf.build()
+            mf.grids.build()
             mf.density_fit()
             mf.max_cycle = args.maxcycle
             mf.kernel()
+
+            if not args.modelpath:
+                #if straight pyscf calc, and not converged, try again as PBE start
+                if not mf.converged:
+                    print("Calculation did not converge. Trying second order convergence with PBE to feed into calculation.")
+                    mfp = method(mol, xc='pbe').newton()
+                    mfp.kernel()
+                    print("PBE Calculation complete -- feeding into original kernel.")
+                    mf.kernel(dm0 = mfp.make_rdm1())
+                    if not mf.converged:
+                        print("Convergence still failed -- {}".format(atom.symbols))
+                        #overwrite to just use pbe energy.
+                        with open('unconv', 'a') as ucfile:
+                            ucfile.write('{}\t{}\t{}\t{}\t{}\t{}\n'.format(idx, atom.symbols, args.xc, mf.e_tot, 'pbe', mfp.e_tot))
+
+                        mf = mfp
+
             ao_eval = mf._numint.eval_ao(mol, mf.grids.coords)
             e_pred = mf.e_tot
             dm_pred = mf.make_rdm1()
@@ -418,10 +494,16 @@ if __name__ == '__main__':
             mo_occs[idx] = mf.mo_occ
             mfs[idx] = mf
             nelecs[idx] = mol.nelectron
+            gweights[idx] = mf.grids.weights
 
 
             results['E'] = e_pred
             results['dm'] = dm_pred
+            results['ao_eval'] = ao_eval
+            results['mo_occ'] = mf.mo_occ
+            #results['mf'] = mf
+            results['nelec'] = mol.nelectron
+            results['gweights'] = mf.grids.weights
 
         dmp = os.path.join(args.refpath, '{}_{}.dm.npy'.format(idx, symbols))
         dm_ref = np.load(dmp)
@@ -430,7 +512,7 @@ if __name__ == '__main__':
 
         rho_pred = dm_to_rho(pred_dm[idx][1], ao_evals[idx])
 
-        rho_err = rho_dev(pred_dm[idx][1], nelecs[idx], rho_pred, rho_ref, mfs[idx].grids.weights, mo_occs[idx])
+        rho_err = rho_dev(pred_dm[idx][1], nelecs[idx], rho_pred, rho_ref, gweights[idx], mo_occs[idx])
         rho_errs['rho'].append(rho_err)
         print("Rho Error: ", rho_err)
         

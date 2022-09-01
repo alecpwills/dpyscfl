@@ -43,6 +43,7 @@ parser.add_argument('--maxcycle', action='store', type=int, default=50, help='li
 parser.add_argument('--atomization', action='store_true', default=False, help="If flagged, does atomization energies as well as total energies.")
 parser.add_argument('--atmflip', action='store_true', default=False, help="If flagged, does reverses reference atomization energies sign")
 parser.add_argument('--rho', action='store_true', default=False, help='If flagged, calculate rho loss')
+parser.add_argument('--forceUKS', action='store_true', default=False, help='If flagged, force pyscf method to be UKS.')
 args = parser.parse_args()
 
 scale = 1
@@ -160,146 +161,9 @@ def eval_xc(xc_code, rho, spin=0, relativity=0, deriv=1, verbose=None):
     return exc, vxc, fxc, kxc
 
 
-def memory_watch(pid, idx, formula, fails, memoryMaxFrac=0.65):
-    memoryMax = memoryMaxFrac*psutil.virtual_memory().total #total memory in bytes
-    while True:
-        process = psutil.Process(pid)
-        processMemory = process.memory_info().rss #in bytes
-        if processMemory > memoryMax:
-            print("MEMORY MAX EXCEEDED. CONTINUING")
-            fails.append((idx, formula, "MEMMAX"))
-            break
-    os.kill(pid, signal.SIGINT)
 
-
-def scf_wrap(scf, dm_in, matrices, sc, molecule=''):
-    try:
-        results = scf(dm_in, matrices, sc)
-    except:
-        print("========================================================")
-        print("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
-        print("SCF CALCULATION FAILED")
-        print("SCF Calculation failed for {}, likely eigen-decomposition".format(molecule))
-        print("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
-        print("========================================================")
-        results = None
-    return results
-
-def get_size(obj, seen=None):
-    """Recursively finds size of objects"""
-    size = sys.getsizeof(obj)
-    if seen is None:
-        seen = set()
-    obj_id = id(obj)
-    if obj_id in seen:
-        return 0
-    # Important mark as seen *before* entering recursion to gracefully handle
-    # self-referential objects
-    seen.add(obj_id)
-    if isinstance(obj, dict):
-        size += sum([get_size(v, seen) for v in obj.values()])
-        size += sum([get_size(k, seen) for k in obj.keys()])
-    #elif hasattr(obj, '__dict__'):
-    #    size += get_size(obj.__dict__, seen)
-    #elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, bytearray)):
-    #    size += sum([get_size(i, seen) for i in obj])
-    return size
-
-#DESKTOP SKIPS
-#skips = ['C5H8']
-#SEAWULF SKIPS
 skipidcs = args.skipidcs if args.skipidcs else []
 skipforms = args.skipforms if args.skipforms else []
-
-def eval_wrap(atomspath, refdatpath, modelpath, evalinds=[]):
-    atoms = read(atomsp, ':')
-    e_refs = [a.info['energy']/scale for a in atoms]
-    indices = np.arange(len(atoms)).tolist()
-    ref_dct = {'E':[], 'dm':[], 'mo_e':[]}
-    pred_dct = {'E':[], 'dm':[], 'mo_e':[]}
-    loss = torch.nn.MSELoss()
-    loss_dct = {"E":0}
-    fails = []
-    grid_level = 5 if args.xc else 0
-
-    if not evalinds:
-        evalinds = indices
-
-    for idx, atom in enumerate(atoms):
-        results = {}
-        #manually skip for preservation of reference file lookups
-        if idx not in evalinds:
-            continue
-
-        formula = atom.get_chemical_formula()
-        symbols = atom.symbols
-        print("================= {}:    {} ======================".format(idx, formula))
-        print("Getting Datapoint")
-        if (formula in skipforms) or (idx in skipidcs):
-            print("SKIPPING")
-            fails.append((idx, formula))
-            continue
-        name, mol = ase_atoms_to_mol(atom)
-        if args.modelpath:
-            _, method = gen_mf_mol(mol, xc='notnull', grid_level=grid_level, nxc=True)
-            mf = KS(mol, method, model_path=model_path)
-        else:
-            _, method = gen_mf_mol(mol, xc=args.xc, grid_level=grid_level, nxc=False)
-            print("Atomic Method: ", method)
-            mf = method(mol)
-            mf.xc = args.xc
-        mf.grids.level = grid_level
-        mf.density_fit()
-        mf.kernel()
-        if not args.modelpath:
-            #if straight pyscf calc, and not converged, try again as PBE start
-            if not mf.converged:
-                print("Calculation did not converge. Trying second order convergence with PBE to feed into calculation.")
-                mfp = method(mol, xc='pbe').newton()
-                mfp.kernel()
-                print("PBE Calculation complete -- feeding into original kernel.")
-                mf.kernel(dm0 = mfp.make_rdm1())
-                if not mf.converged:
-                    print("Convergence still failed -- {}".format(atom.symbols))
-                    #overwrite to just use pbe energy.
-                    mf = mfp
-        e_pred = mf.e_tot
-        dm_pred = mf.make_rdm1()
-
-        dmp = os.path.join(refdatpath, '{}_{}.dm.npy'.format(idx, symbols))
-        dm_ref = np.load(dmp)
-        e_ref = e_refs[idx]
-
-        results['E'] = e_pred
-        results['dm'] = dm_pred
-        
-
-        if args.writeeach:
-            wep = os.path.join(args.writepath, args.writeeach)
-            if args.writepred:
-                predep = os.path.join(wep, '{}_{}.pckl'.format(idx, symbols))
-                with open(predep, 'wb') as file:
-                    file.write(pickle.dumps(results))
-
-        ref_dct['E'].append(e_ref)
-        ref_dct['dm'].append(dm_ref)
-
-        pred_dct['E'].append(results['E'])
-        pred_dct['dm'].append(results['dm'])
-
-        for key in loss_dct.keys():
-            print(key)
-            rd = torch.Tensor(ref_dct[key])
-            pd = torch.Tensor(pred_dct[key])
-            loss_dct[key] = loss(rd, pd)
-        
-        print("+++++++++++++++++++++++++++++++")
-        print("RUNNING LOSS")
-        print(loss_dct)
-        print("+++++++++++++++++++++++++++++++")
-        
-
-
 
 
 if __name__ == '__main__':
@@ -346,8 +210,11 @@ if __name__ == '__main__':
             atomic = [Atoms(symbols=s) for s in atomic]
             #generates pyscf mol, default basis 6-311++G(3df,2pd), charge=0, spin=None
             atomic_mol = [ase_atoms_to_mol(at, basis=args.basis, spin=None, charge=0) for at in atomic]
-
-            atomic_method = [gen_mf_mol(mol[1], xc='notnull', grid_level=args.gridlevel, nxc=True) for mol in atomic_mol]
+            if args.forceUKS:
+                pol = True
+            else:
+                pol = False
+            atomic_method = [gen_mf_mol(mol[1], xc='notnull', pol=True, grid_level=args.gridlevel, nxc=True) for mol in atomic_mol]
             for idx, methodtup in enumerate(atomic_method):
                 print(idx, methodtup)
                 name, mol = atomic_mol[idx]

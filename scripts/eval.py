@@ -71,8 +71,6 @@ def rho_dev(dm, nelec, rho, rho_ref, grid_weights, mo_occ):
             drho = torch.Tensor([0])
     else:
         print("NON-2D DM")
-        rho = contract('ij,ik,xjk->xi',
-                           ao_eval, ao_eval, dm)
         if torch.sum(mo_occ) == 1:
             drho = torch.sqrt(torch.sum(torch.Tensor((rho[0]-rho_ref[0])**2*grid_weights)/torch.sum(mo_occ[0,0])**2))
         else:
@@ -302,7 +300,7 @@ if __name__ == '__main__':
                 pred_e[idx] = [formula, e_pred]
                 pred_dm[idx] = [formula, dm_pred]
                 ao_evals[idx] = results['ao_eval']
-                mo_occs[idx] = results['mf.mo_occ']
+                mo_occs[idx] = results['mo_occ']
                 #mfs[idx] = results['mf']
                 nelecs[idx] = results['nelec']
                 gweights[idx] = results['gweights']

@@ -225,7 +225,7 @@ if __name__ == '__main__':
                     
                 mf.grids.level = args.gridlevel
                 mf.max_cycle = args.maxcycle
-                mf.density_fit()
+                #mf.density_fit()
                 mf.kernel()
                 
                 if not args.modelpath:
@@ -333,7 +333,7 @@ if __name__ == '__main__':
                 mf.xc = args.xc
             mf.grids.level = args.gridlevel
             mf.grids.build()
-            mf.density_fit()
+            #mf.density_fit()
             mf.max_cycle = args.maxcycle
             mf.kernel()
 

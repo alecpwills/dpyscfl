@@ -44,6 +44,7 @@ parser.add_argument('--atomization', action='store_true', default=False, help="I
 parser.add_argument('--atmflip', action='store_true', default=False, help="If flagged, does reverses reference atomization energies sign")
 parser.add_argument('--rho', action='store_true', default=False, help='If flagged, calculate rho loss')
 parser.add_argument('--forceUKS', action='store_true', default=False, help='If flagged, force pyscf method to be UKS.')
+parser.add_argument('--testgen', action='store_true', default=False, help='If flagged, only loops over trajectory to generate mols')
 args = parser.parse_args()
 
 scale = 1
@@ -163,6 +164,35 @@ def eval_xc(xc_code, rho, spin=0, relativity=0, deriv=1, verbose=None):
 skipidcs = args.skipidcs if args.skipidcs else []
 skipforms = args.skipforms if args.skipforms else []
 
+#spins for single atoms, since pyscf doesn't guess this correctly.
+spins = {
+    'Al': 1,
+    'B' : 1,
+    'Li': 1,
+    'Na': 1,
+    'Si': 2 ,
+    'Be':0,
+    'C': 2,
+    'Cl': 1,
+    'F': 1,
+    'H': 1,
+    'N': 3,
+    'O': 2,
+    'P': 3,
+    'S': 2
+}
+
+def get_spin(at):
+    if len(at.positions) == 1:
+        spin = spins[str(at.symbols)]
+    else:
+        if 'radical' in at.info.get('name', None):
+            spin = 1
+        elif at.info.get('openshell', None):
+            spin = 2
+        else:
+            spin = 0
+    return spin
 
 if __name__ == '__main__':
     with open('unconv','w') as ucfile:
@@ -200,14 +230,16 @@ if __name__ == '__main__':
                 atomic_e = pickle.load(f)
         except:
             print("ATOMIZATION ENERGY FLAGGED -- CALCULATING SINGLE ATOM ENERGIES")
-            atomic = []
+            atomic_set = []
             for at in atoms:
-                atomic += at.get_chemical_symbols()
-            atomic = list(set(atomic))
-            atomic_e = {s:0 for s in atomic}
-            atomic = [Atoms(symbols=s) for s in atomic]
+                atomic_set += at.get_chemical_symbols()
+            atomic_set = list(set(atomic_set))
+            for s in atomic_set:
+                assert s in list(spins.keys()), "{}: Atom in dataset not present in spins dictionary.".format(s)
+            atomic_e = {s:0 for s in atomic_set}
+            atomic = [Atoms(symbols=s) for s in atomic_set]
             #generates pyscf mol, default basis 6-311++G(3df,2pd), charge=0, spin=None
-            atomic_mol = [ase_atoms_to_mol(at, basis=args.basis, spin=None, charge=0) for at in atomic]
+            atomic_mol = [ase_atoms_to_mol(at, basis=args.basis, spin=get_spin(at), charge=0) for at in atomic]
             if args.forceUKS:
                 ipol = True
             else:
@@ -320,7 +352,22 @@ if __name__ == '__main__':
                 print("SKIPPING")
                 fails.append((idx, formula))
                 continue
-            name, mol = ase_atoms_to_mol(atom, basis=args.basis, spin=None, charge=0)
+            molgen = False
+            scount = 0
+            while not molgen:
+                try:
+                    name, mol = ase_atoms_to_mol(atom, basis=args.basis, spin=get_spin(atom)-scount, charge=0)
+                    molgen=True
+                except RuntimeError:
+                    #spin disparity somehow, try with one less until 0
+                    print("RuntimeError. Trying with reduced spin.")
+                    spin = get_spin(atom)
+                    spin = spin - scount - 1
+                    scount += 1
+                    if spin < 0:
+                        raise ValueError
+            if args.testgen:
+                continue
             if args.forceUKS:
                 ipol = True
             else:

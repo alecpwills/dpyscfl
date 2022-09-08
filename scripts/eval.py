@@ -184,9 +184,11 @@ spins = {
 
 def get_spin(at):
     if len(at.positions) == 1:
-        spin = spins[str(at.symbols)]
+        spin = spins_dict[str(at.symbols)]
     else:
-        if 'radical' in at.info.get('name', None):
+        if at.info.get('spin', None):
+            spin = at.info['spin']
+        elif 'radical' in at.info.get('name', None):
             spin = 1
         elif at.info.get('openshell', None):
             spin = 2

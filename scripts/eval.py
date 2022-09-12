@@ -242,7 +242,7 @@ if __name__ == '__main__':
                 atomic_set += at.get_chemical_symbols()
             atomic_set = list(set(atomic_set))
             for s in atomic_set:
-                assert s in list(spins.keys()), "{}: Atom in dataset not present in spins dictionary.".format(s)
+                assert s in list(spins_dict.keys()), "{}: Atom in dataset not present in spins dictionary.".format(s)
             atomic_e = {s:0 for s in atomic_set}
             atomic = [Atoms(symbols=s) for s in atomic_set]
             #generates pyscf mol, default basis 6-311++G(3df,2pd), charge=0, spin=None

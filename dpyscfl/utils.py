@@ -8,6 +8,44 @@ from ase.io import read
 import pandas as pd
 import pickle, os, sys
 
+#spins for single atoms, since pyscf doesn't guess this correctly.
+spins_dict = {
+    'Al': 1,
+    'B' : 1,
+    'Li': 1,
+    'Na': 1,
+    'Si': 2 ,
+    'Be':0,
+    'C': 2,
+    'Cl': 1,
+    'F': 1,
+    'H': 1,
+    'N': 3,
+    'O': 2,
+    'P': 3,
+    'S': 2
+}
+
+def get_spin(at):
+    #if single atom and spin is not specified in at.info dictionary, use spins_dict
+    if ( (len(at.positions) == 1) and not ('spin' in at.info) ):
+        spin = spins_dict[str(at.symbols)]
+    else:
+        if at.info.get('spin', None):
+            print('Spin specified in atom info.')
+            spin = at.info['spin']
+        elif 'radical' in at.info.get('name', ''):
+            print('Radical specified in atom.info["name"], assuming spin 1.')
+            spin = 1
+        elif at.info.get('openshell', None):
+            print("Openshell specified in atom info, attempting spin 2.")
+            spin = 2
+        else:
+            print("No specifications in atom info to help, assuming no spin.")
+            spin = 0
+    return spin
+
+
 def get_datapoint(mol, mf, dfit = True, init_guess=False, do_fcenter=True):
     """
     Builds all matrices needed for SCF calculations (the ones considered constant)
@@ -404,12 +442,12 @@ def get_rho(mf, mol, dm, grids):
 def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
                   nl_cutoff=0, grid_deriv=1, init_guess = False, ml_basis='',
                   do_fcenter=True, zsym = False, n_rad=20,n_ang=10, spin=None, pol=False,
-                  ref_basis='', ref_path = '', ref_index=0, dfit=True):
+                  ref_basis='', ref_path = '', ref_traj='', ref_index=0, dfit=True):
     """_summary_
 
     .. todo:: Refactor to be in line with current implementation, get_datapoint exists already.
 
-    .. todo:: If ref_path specified, reading in the baseline energy from reference assumes 'results.traj' specified, with atoms.calc.result.energy specified.
+    .. todo:: If ref_path specified, reading in the baseline energy from reference assumes ref_traj specified, with atoms.calc.result.energy specified.
 
     Args:
         atoms (:class:`ASE.Atoms`): The list of atoms to calculate datapoints for
@@ -441,15 +479,41 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
     if not ref_basis:
         ref_basis = basis
 
-    if atoms.info.get('openshell',False) and spin ==0:
-        spin = 2
+    spin = get_spin(atoms)
     fractional = atoms.info.get('fractional', None)
     charge=atoms.info.get('charge', 0)
 
     features = {}
-    
-    _, mol = ase_atoms_to_mol(atoms, basis=basis, charge=charge, spin=spin)
-    _, mol_ref = ase_atoms_to_mol(atoms, basis=ref_basis, charge=charge, spin=spin)
+    #generate mol
+    molgen = False
+    scount = 0
+    while not molgen:
+        try:
+            _, mol = ase_atoms_to_mol(atoms, basis=basis, charge=charge, spin=spin)
+            molgen=True
+        except RuntimeError:
+            #spin disparity somehow, try with one less until 0
+            print("RuntimeError. Trying with reduced spin.")
+            spin = get_spin(atoms)
+            spin = spin - scount - 1
+            scount += 1
+            if spin < 0:
+                raise ValueError
+    #generate ref_mol
+    molgen = False
+    scount = 0
+    while not molgen:
+        try:
+            _, mol_ref = ase_atoms_to_mol(atoms, basis=ref_basis, charge=charge, spin=spin)
+            molgen=True
+        except RuntimeError:
+            #spin disparity somehow, try with one less until 0
+            print("RuntimeError. Trying with reduced spin.")
+            spin = get_spin(atoms)
+            spin = spin - scount - 1
+            scount += 1
+            if spin < 0:
+                raise ValueError
 
     if ml_basis:
         auxmol = ase_atoms_to_mol(atom=atoms,spin=spin, basis=gto.parse(open(ml_basis,'r').read()))
@@ -458,6 +522,16 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
 
     mf, method = gen_mf_mol(mol, xc=xc, pol=pol, grid_level=grid_level)
     mf.kernel()
+    if not mf.converged:
+        print("Calculation did not converge. Trying second order convergence with PBE to feed into calculation.")
+        mfp = method(mol, xc='pbe').newton()
+        mfp.kernel()
+        print("PBE Calculation complete -- feeding into original kernel.")
+        mf.kernel(dm0 = mfp.make_rdm1())
+        if not mf.converged:
+            print("Convergence still failed -- {}".format(atoms.symbols))
+            mf = mfp
+
 
     matrices = get_datapoint(mol=mol, mf=mf, dfit=dfit, init_guess=init_guess, do_fcenter=do_fcenter)
 
@@ -499,8 +573,8 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
         dm_guess = dm_init
         dm_init = dm_base
         print("FRACTIONAL SHAPES: DM_GUESS = {}, DM_BASE = {}".format(dm_guess.shape, dm_init.shape))
-        e0_base = read(os.path.join(atoms.info['baseRef'], 'results.traj'), atoms.info['baseidx']).calc.results['energy']
-        eC_base = read(os.path.join(atoms.info['chargeRef'], 'results.traj'), atoms.info['baseidx']).calc.results['energy']
+        e0_base = read(os.path.join(atoms.info['baseRef'], ref_traj), atoms.info['baseidx']).calc.results['energy']
+        eC_base = read(os.path.join(atoms.info['chargeRef'], ref_traj), atoms.info['baseidx']).calc.results['energy']
         e_base = (1-fractional)*e0_base + fractional*eC_base
         features.update({'dm':dm_base, 'dm_init':dm_guess, 'e_base':e_base})
 
@@ -520,9 +594,9 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
         print("REF, NONFRAC SHAPES: DM_GUESS = {}, DM_BASE = {}".format(dm_guess.shape, dm_init.shape))
         #TODO: Amend the way this is done
         print("Reading in reference target energy. Current: {}".format(e_base))
-        e_base = read(os.path.join(ref_path, 'results.traj'), ref_index).calc.results['energy']
-        e_base = read(os.path.join(ref_path, 'results.traj'), ref_index).info['target_energy']
-        e_calc = read(os.path.join(ref_path, 'results.traj'), ref_index).info['calc_energy']
+        #e_base = read(os.path.join(ref_path, ref_traj), ref_index).calc.results['energy']
+        e_base = read(os.path.join(ref_path, ref_traj), ref_index).info['target_energy']
+        e_calc = read(os.path.join(ref_path, ref_traj), ref_index).info['calc_energy']
         
 
         print("Reading in reference target energy. Post-read: {}".format(e_base))

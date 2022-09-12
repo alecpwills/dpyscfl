@@ -18,6 +18,7 @@ parser.add_argument('func', action='store', choices=['PBE','SCAN'], help='The XC
 parser.add_argument('atoms', action='store', type=str, help='Location of the .xyz/.traj file to read into ASE Atoms object, which will be used to generate baseline.')
 parser.add_argument('-r', '--ref_path', action='store', default='', help='Location of reference DMs and energies.')
 parser.add_argument('--sequential', action="store_true", help='Whether to get_datapoint individually or use list then write')
+parser.add_argument('--forcepol', action="store_true", default=False, help='If flagged, all calculations spin polarized. Otherwise, spin determines.')
 parser.add_argument('--dfit', action='store_true', default=False, help='Generate density fitting matrices or not')
 parser.add_argument('--mingridlevel', action='store', type=int, default=3, help='Minimum grid level to use in generation of matrices. Defaults to 3, as paper suggests. If atom has larger specified grid_level, larger is used')
 args = parser.parse_args()
@@ -43,17 +44,21 @@ if __name__ == '__main__':
 
     #as implemented, pol is always false.
     #in the function call, this is empty
-    pol = {}
+    pol = args.forcepol
     basis = '6-311++G(3df,2pd)'
 
     distances = np.arange(len(atoms))
+    
+    reftraj = args.atoms.split('/')[-1]
+
     if not args.sequential:
         baseline = [old_get_datapoint(d, basis=basis, grid_level= max(d.info.get('grid_level', 1), args.mingridlevel),
                                 xc=func, zsym=d.info.get('sym',True),
                                 n_rad=d.info.get('n_rad',30), n_ang=d.info.get('n_ang',15),
                                 init_guess=False, spin = d.info.get('spin',None),
-                                pol=pol.get(''.join(d.get_chemical_symbols()), False), do_fcenter=True,
-                                ref_path=args.ref_path, ref_index= idx,ref_basis='6-311++G(3df,2pd)', dfit=args.dfit) for idx, d in zip(indices, atoms)]
+                                pol=pol, do_fcenter=True,
+                                ref_path=args.ref_path, ref_index= idx, ref_traj=reftraj,
+                                ref_basis='6-311++G(3df,2pd)', dfit=args.dfit) for idx, d in zip(indices, atoms)]
 
         E_base =  [r[0] for r in baseline]
         with open('e_base.dat', 'w') as f:
@@ -76,7 +81,7 @@ if __name__ == '__main__':
                         xc=func, zsym=d.info.get('sym',True),
                         n_rad=d.info.get('n_rad',30), n_ang=d.info.get('n_ang',15),
                         init_guess=False, spin = d.info.get('spin',None),
-                        pol=pol.get(''.join(d.get_chemical_symbols()), False), do_fcenter=True,
+                        pol=pol, do_fcenter=True,
                         ref_path=args.ref_path, ref_index= idx,ref_basis='6-311++G(3df,2pd)', dfit=args.dfit)
 
             E_base =  baseline[0]

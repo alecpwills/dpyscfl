@@ -165,7 +165,7 @@ skipidcs = args.skipidcs if args.skipidcs else []
 skipforms = args.skipforms if args.skipforms else []
 
 #spins for single atoms, since pyscf doesn't guess this correctly.
-spins = {
+spins_dict = {
     'Al': 1,
     'B' : 1,
     'Li': 1,
@@ -183,16 +183,21 @@ spins = {
 }
 
 def get_spin(at):
-    if len(at.positions) == 1:
+    #if single atom and spin is not specified in at.info dictionary, use spins_dict
+    if ( (len(at.positions) == 1) and not ('spin' in at.info) ):
         spin = spins_dict[str(at.symbols)]
     else:
         if at.info.get('spin', None):
+            print('Spin specified in atom info.')
             spin = at.info['spin']
-        elif 'radical' in at.info.get('name', None):
+        elif 'radical' in at.info.get('name', ''):
+            print('Radical specified in atom.info["name"], assuming spin 1.')
             spin = 1
         elif at.info.get('openshell', None):
+            print("Openshell specified in atom info, attempting spin 2.")
             spin = 2
         else:
+            print("No specifications in atom info to help, assuming no spin.")
             spin = 0
     return spin
 

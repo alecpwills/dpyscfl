@@ -13,6 +13,7 @@ from dpyscfl.losses import *
 from functools import partial
 from ase.units import Bohr
 from datetime import datetime
+import pylibnxc
 import os, psutil, tarfile, argparse, json, shutil
 import tqdm, inspect
 #from eval import KS, eval_xc, eval_wrap
@@ -71,6 +72,10 @@ parser.add_argument('--testmol', type=str, action='store', default='', help='If 
 parser.add_argument('--torchtype', type=str, default='float', help='float or double')
 parser.add_argument('--testall', action='store_true', default=False, help='If flagged, forces testing of entire training set.')
 parser.add_argument('--targetdir', action='store', type=str, default='', help='Directory in which to store checkpoint files during training.')
+parser.add_argument('--valtraj', type=str, action='store', default='', help="Path to validation trajectory. Validation won't occur without specifying this.")
+parser.add_argument('--valbasis', metavar='basis', type=str, nargs = '?', default='6-311++G(3df,2pd)', help='validation basis to use. default 6-311++G(3df,2pd)')
+parser.add_argument('--valpol', action='store_true', default=True, help='If flagged, force pyscf method to be UKS for validation.')
+parser.add_argument('--valgridlevel', action='store', type=int, default=5, help='grid level')
 args = parser.parse_args()
 
 ttypes = {'float' : torch.float,
@@ -81,6 +86,144 @@ HYBRID = (args.hyb_par > 0.0)
 
 
 torch.set_default_dtype(ttypes[args.torchtype])
+
+#spins for single atoms, since pyscf doesn't guess this correctly.
+spins_dict = {
+    'Al': 1,
+    'B' : 1,
+    'Li': 1,
+    'Na': 1,
+    'Si': 2 ,
+    'Be':0,
+    'C': 2,
+    'Cl': 1,
+    'F': 1,
+    'H': 1,
+    'N': 3,
+    'O': 2,
+    'P': 3,
+    'S': 2
+}
+
+def get_spin(at):
+    #if single atom and spin is not specified in at.info dictionary, use spins_dict
+    if ( (len(at.positions) == 1) and not ('spin' in at.info) ):
+        spin = spins_dict[str(at.symbols)]
+    else:
+        if at.info.get('spin', None):
+            print('Spin specified in atom info.')
+            spin = at.info['spin']
+        elif 'radical' in at.info.get('name', ''):
+            print('Radical specified in atom.info["name"], assuming spin 1.')
+            spin = 1
+        elif at.info.get('openshell', None):
+            print("Openshell specified in atom info, attempting spin 2.")
+            spin = 2
+        else:
+            print("No specifications in atom info to help, assuming no spin.")
+            spin = 0
+    return spin
+
+def KS(mol, method, model_path='', nxc_kind='grid', **kwargs):
+    """ Wrapper for the pyscf RKS and UKS class
+    that uses a libnxc functionals
+    """
+    #hyb = kwargs.get('hyb', 0)
+    mf = method(mol, **kwargs)
+    if model_path != '':
+        if nxc_kind.lower() == 'atomic':
+            model = get_nxc_adapter('pyscf', model_path)
+            mf.get_veff = veff_mod_atomic(mf, model)
+        elif nxc_kind.lower() == 'grid':
+            parsed_xc = pylibnxc.pyscf.utils.parse_xc_code(model_path)
+            dft.libxc.define_xc_(mf._numint,
+                                 eval_xc,
+                                 pylibnxc.pyscf.utils.find_max_level(parsed_xc),
+                                 hyb=parsed_xc[0][0])
+            mf.xc = model_path
+        else:
+            raise ValueError(
+                "{} not a valid nxc_kind. Valid options are 'atomic' or 'grid'"
+                .format(nxc_kind))
+    return mf
+
+def get_singles(atoms, model):
+    atomic_set = []
+    for at in atoms:
+        atomic_set += at.get_chemical_symbols()
+    atomic_set = list(set(atomic_set))
+    for s in atomic_set:
+        assert s in list(spins_dict.keys()), "{}: Atom in dataset not present in spins dictionary.".format(s)
+    atomic_e = {s:0 for s in atomic_set}
+    atomic = [Atoms(symbols=s) for s in atomic_set]
+    #generates pyscf mol, default basis 6-311++G(3df,2pd), charge=0, spin=None
+    atomic_mol = [ase_atoms_to_mol(at, basis=args.valbasis, spin=get_spin(at), charge=0) for at in atomic]
+    if args.valpol:
+        ipol = True
+    else:
+        ipol = False
+    atomic_method = [gen_mf_mol(mol[1], xc='notnull', pol=ipol, grid_level=args.valgridlevel, nxc=True) for mol in atomic_mol]
+    for idx, methodtup in enumerate(atomic_method):
+        print(idx, methodtup)
+        name, mol = atomic_mol[idx]
+        method = methodtup[1]
+        mf = KS(mol, method, model_path=model)
+            
+        mf.grids.level = args.gridlevel
+        mf.max_cycle = args.maxcycle
+        #mf.density_fit()
+        mf.kernel()
+
+        atomic_e[name] = mf.e_tot
+        print("++++++++++++++++++++++++")
+        print("Atomic Energy: {} -- {}".format(name, mf.e_tot))
+        print("++++++++++++++++++++++++")
+    with open('atomicen.val.dat', 'w') as f:
+        f.write("#Atom \t Energy (Hartree) \n")
+        for k, v in atomic_e.items():
+            f.write('{} \t {} \n'.format(k, v))
+            print('{} \t {}'.format(k,v))
+    with open('atomicen.val.pkl', 'wb') as f:
+        pickle.dump(atomic_e, f)
+    return atomic_e
+
+def get_validation(atoms, model):
+    energies = {at.get_chemical_formula():0 for at in atoms}
+
+    for idx, atom in enumerate(atoms):
+        formula = atom.get_chemical_formula()
+        symbols = atom.symbols
+        results = {}
+        #manually skip for preservation of reference file lookups
+
+        print("================= {}:    {} ======================".format(idx, formula))
+        print("Getting Validation Datapoint")
+        molgen = False
+        scount = 0
+        while not molgen:
+            try:
+                name, mol = ase_atoms_to_mol(atom, basis=args.valbasis, spin=get_spin(atom)-scount, charge=0)
+                molgen=True
+            except RuntimeError:
+                #spin disparity somehow, try with one less until 0
+                print("RuntimeError. Trying with reduced spin.")
+                spin = get_spin(atom)
+                spin = spin - scount - 1
+                scount += 1
+                if spin < 0:
+                    raise ValueError
+        _, method = gen_mf_mol(mol, xc='notnull', pol=args.valpol, grid_level=args.valgridlevel, nxc=True)
+        mf = KS(mol, method, model_path=model)
+        mf.grids.level = args.gridlevel
+        mf.grids.build()
+        #mf.density_fit()
+        mf.max_cycle = args.maxcycle
+        mf.kernel()
+
+        energies[formula] = mf.e_tot
+
+    return energies
+
 
 
 def scf_wrap(scf, dm_in, matrices, sc, molecule=''):
@@ -791,3 +934,47 @@ if __name__ == '__main__':
             print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
             print("============================================================")
             scheduler.step(total_loss)
+
+            if args.valtraj:
+                val = read(args.valtraj, ':')
+
+                atms = [i for i in val if i.info.get('atomization', None)]
+                bhs = [i for i in val if i.info.get('product', None)]
+                products = list(set([i.info['product'] for i in bhs]))
+
+                atomic_e = get_singles(atms, model=logpath+'_current.pt')
+
+                val_e = get_validation(val, model=logpath+'_current.pt')
+
+                for at in atms:
+                    formula = at.get_chemical_formula()
+                    pred_e = val_e[at.get_chemical_formula()]
+                    start = pred_e
+                    subs = at.get_chemical_symbols()
+                    if len(subs) == 1:
+                        #single atom, no atomization needed
+                        print("SINGLE ATOM -- NO ATOMIZATION CALCULATION.")
+                    else:
+                        print("{} ({}) decomposition -> {}".format(at.get_chemical_formula(), pred_e, subs))
+                        for s in subs:
+                            print("{} - {} ::: {} - {} = {}".format(formula, s, start, atomic_e[s], start - atomic_e[s]))
+                            start -= atomic_e[s]
+                        print("Predicted Atomization Energy for {} : {}".format(formula, start))
+                        print("Reference Atomization Energy for {} : {}".format(formula, at.info['atomization']))
+                        print("Error: {}".format(start - at.info['atomization']))
+
+                for prod in products:
+                    reactants = [i for i in val if i.info['product'] == prod]
+                    energies = [i.info['enmult']*val_e[i.get_chemical_formula()] for i in bhs]
+                    bhr = [i.info['bh_ref'] for i in reactants if i.info.get('bh_ref', None)][0]
+                    print("VALIDATION: BH -- {}: {}".format(prod, reactants))
+                    bh = sum(energies)
+                    print("CALCULATED BH: {}".format(bh))
+                    print("REFERENCE BH: {}".format(bhr))
+                    print("ERROR: |{} - {}| = {}".format(bh, bhr, abs(bh-bhr)))
+
+                
+                    
+
+
+

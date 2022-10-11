@@ -38,7 +38,6 @@ parser.add_argument('--pretrain_loc', action='store', type=str, help='Location o
 parser.add_argument('--type', action='store', choices=['GGA','MGGA'])
 parser.add_argument('--datapath', action='store', type=str, help='Location of precomputed matrices (run prep_data first)')
 parser.add_argument('--reftraj', action='store', type=str, help='Location of reference trajectories')
-parser.add_argument('--valtraj', action='store', type=str, help='Location of reference data to use in validation')
 parser.add_argument('--n_hidden', metavar='n_hidden', type=int, default=16, help='Number of hidden nodes (16)')
 parser.add_argument('--hyb_par', metavar='hyb_par', type=float, default=0.0, help='Hybrid mixing parameter (0.0)')
 parser.add_argument('--E_weight', metavar='e_weight', type=float, default=0.01, help='Weight of total energy term in loss function (0)')
@@ -76,6 +75,10 @@ parser.add_argument('--valtraj', type=str, action='store', default='', help="Pat
 parser.add_argument('--valbasis', metavar='basis', type=str, nargs = '?', default='6-311++G(3df,2pd)', help='validation basis to use. default 6-311++G(3df,2pd)')
 parser.add_argument('--valpol', action='store_true', default=True, help='If flagged, force pyscf method to be UKS for validation.')
 parser.add_argument('--valgridlevel', action='store', type=int, default=5, help='grid level')
+parser.add_argument('--valmaxcycle', action='store', type=int, default=100, help='max cycle for validation')
+parser.add_argument('--noxcdiffpop', action='store_false', default=True, help='If flagged, does NOT pop the molecules that Sebastian popped from his training set.')
+parser.add_argument('--testpop', action='store_true', default=False, help='for testing purposes')
+parser.add_argument('--passthrough', action='store_true', default=False, help='If flagged, first passthrough of the training trajectory just generates losses and does not update the network until the next pass.')
 args = parser.parse_args()
 
 ttypes = {'float' : torch.float,
@@ -147,7 +150,60 @@ def KS(mol, method, model_path='', nxc_kind='grid', **kwargs):
                 .format(nxc_kind))
     return mf
 
-def get_singles(atoms, model):
+def eval_xc(xc_code, rho, spin=0, relativity=0, deriv=1, verbose=None):
+    """ Evaluation for grid-based models (not atomic)
+        See pyscf documentation of eval_xc
+    """
+    inp = {}
+    if spin == 0:
+        if rho.ndim == 1:
+            rho = rho.reshape(1, -1)
+        inp['rho'] = rho[0]
+        if len(rho) > 1:
+            dx, dy, dz = rho[1:4]
+            gamma = (dx**2 + dy**2 + dz**2)
+            inp['sigma'] = gamma
+        if len(rho) > 4:
+            inp['lapl'] = rho[4]
+            inp['tau'] = rho[5]
+    else:
+        rho_a, rho_b = rho
+        if rho_a.ndim == 1:
+            rho_a = rho_a.reshape(1, -1)
+            rho_b = rho_b.reshape(1, -1)
+        inp['rho'] = np.stack([rho_a[0], rho_b[0]])
+        if len(rho_a) > 1:
+            dxa, dya, dza = rho_a[1:4]
+            dxb, dyb, dzb = rho_b[1:4]
+            gamma_a = (dxa**2 + dya**2 + dza**2)  #compute contracted gradients
+            gamma_b = (dxb**2 + dyb**2 + dzb**2)
+            gamma_ab = (dxb * dxa + dyb * dya + dzb * dza)
+            inp['sigma'] = np.stack([gamma_a, gamma_ab, gamma_b])
+        if len(rho_a) > 4:
+            inp['lapl'] = np.stack([rho_a[4], rho_b[4]])
+            inp['tau'] = np.stack([rho_a[5], rho_b[5]])
+
+    parsed_xc = pylibnxc.pyscf.utils.parse_xc_code(xc_code)
+    total_output = {'v' + key: 0.0 for key in inp}
+    total_output['zk'] = 0
+    #print(parsed_xc)
+    for code, factor in parsed_xc[1]:
+        model = pylibnxc.LibNXCFunctional(xc_code, kind='grid')
+        output = model.compute(inp)
+        for key in output:
+            if output[key] is not None:
+                total_output[key] += output[key] * factor
+
+    exc, vlapl, vtau, vrho, vsigma = [total_output.get(key,None)\
+      for key in ['zk','vlapl','vtau','vrho','vsigma']]
+
+    vxc = (vrho, vsigma, vlapl, vtau)
+    fxc = None  # 2nd order functional derivative
+    kxc = None  # 3rd order functional derivative
+    return exc, vxc, fxc, kxc
+
+
+def get_singles(atoms, model, valbasis, valpol, valgridlevel, maxcycle):
     atomic_set = []
     for at in atoms:
         atomic_set += at.get_chemical_symbols()
@@ -157,20 +213,16 @@ def get_singles(atoms, model):
     atomic_e = {s:0 for s in atomic_set}
     atomic = [Atoms(symbols=s) for s in atomic_set]
     #generates pyscf mol, default basis 6-311++G(3df,2pd), charge=0, spin=None
-    atomic_mol = [ase_atoms_to_mol(at, basis=args.valbasis, spin=get_spin(at), charge=0) for at in atomic]
-    if args.valpol:
-        ipol = True
-    else:
-        ipol = False
-    atomic_method = [gen_mf_mol(mol[1], xc='notnull', pol=ipol, grid_level=args.valgridlevel, nxc=True) for mol in atomic_mol]
+    atomic_mol = [ase_atoms_to_mol(at, basis=valbasis, spin=get_spin(at), charge=0) for at in atomic]
+    atomic_method = [gen_mf_mol(mol[1], xc='notnull', pol=valpol, grid_level=valgridlevel, nxc=True) for mol in atomic_mol]
     for idx, methodtup in enumerate(atomic_method):
         print(idx, methodtup)
         name, mol = atomic_mol[idx]
         method = methodtup[1]
         mf = KS(mol, method, model_path=model)
             
-        mf.grids.level = args.gridlevel
-        mf.max_cycle = args.maxcycle
+        mf.grids.level = valgridlevel
+        mf.max_cycle = maxcycle
         #mf.density_fit()
         mf.kernel()
 
@@ -187,7 +239,7 @@ def get_singles(atoms, model):
         pickle.dump(atomic_e, f)
     return atomic_e
 
-def get_validation(atoms, model):
+def get_validation(atoms, model, valbasis, valpol, valgridlevel, maxcycle):
     energies = {at.get_chemical_formula():0 for at in atoms}
 
     for idx, atom in enumerate(atoms):
@@ -202,7 +254,7 @@ def get_validation(atoms, model):
         scount = 0
         while not molgen:
             try:
-                name, mol = ase_atoms_to_mol(atom, basis=args.valbasis, spin=get_spin(atom)-scount, charge=0)
+                name, mol = ase_atoms_to_mol(atom, basis=valbasis, spin=get_spin(atom)-scount, charge=0)
                 molgen=True
             except RuntimeError:
                 #spin disparity somehow, try with one less until 0
@@ -212,12 +264,12 @@ def get_validation(atoms, model):
                 scount += 1
                 if spin < 0:
                     raise ValueError
-        _, method = gen_mf_mol(mol, xc='notnull', pol=args.valpol, grid_level=args.valgridlevel, nxc=True)
+        _, method = gen_mf_mol(mol, xc='notnull', pol=valpol, grid_level=valgridlevel, nxc=True)
         mf = KS(mol, method, model_path=model)
-        mf.grids.level = args.gridlevel
+        mf.grids.level = valgridlevel
         mf.grids.build()
         #mf.density_fit()
-        mf.max_cycle = args.maxcycle
+        mf.max_cycle = maxcycle
         mf.kernel()
 
         energies[formula] = mf.e_tot
@@ -295,8 +347,12 @@ if __name__ == '__main__':
     #pop = []
     
     #xcdiff pops
-    pop = [34, 33, 32, 10, 7, 5]
-
+    if args.noxcdiffpop:
+        pop = [34, 33, 32, 10, 7, 5]
+    else:
+        pop = []
+    if args.testpop:
+        pop = list(np.arange(len(atoms)-1))
     #print("popping specified atoms: {}".format(pop))
     #[atoms.pop(i) for i in pop]
     #[indices.pop(i) for i in pop]
@@ -537,6 +593,15 @@ if __name__ == '__main__':
 
     for epoch in range(100000):
         encountered_nan = True
+        if (epoch == 0 and args.passthrough):
+            #will be turned to train after first epoch
+            #first run through will just evaluate on the molecules and print losses
+            print("FIRST PASS: EVALUATION ON TRAINING DATA")
+            scf.xc.evaluate()
+        elif (epoch == 1 and args.passthrough):
+            print("NEXT EPOCH BEGINNING - PASSTHROUGH COMPLETE.")
+            print("SETTING NETWORK TO TRAINING MODE.")
+            scf.xc.train()
         while(encountered_nan):
             error_cnt = 0
             running_losses = {"rho": 0, "ae":0, "E":0}
@@ -841,16 +906,21 @@ if __name__ == '__main__':
                         loss += args.nonsc_weight * ael
                         running_losses['ae'] += args.nonsc_weight * ael.item()
                     total_loss += loss.item()
-                    print("Backward Propagation")
-                    loss.backward()
-                    if args.checkgrad:
-                        for p in scf.xc.parameters():
-                            if p.requires_grad:
-                                print('===========\ngradient\n----------\nmax: {}\nmin: {}'.format(torch.max(p.grad), torch.min(p.grad)))
-                    print("Step Optimizer")
-                    optimizer.step()
-                    print("Zeroing Optimizer Grad")
-                    optimizer.zero_grad()
+                    if (epoch == 0 and args.passthrough):
+                        #if first pass and specify args.passthrough, first pass does evaluation and not train.
+                        #set here to train once first pass completes
+                        print("PASSTHROUGH -- {} DONE.".format(m_form))
+                    else:
+                        print("Backward Propagation")
+                        loss.backward()
+                        if args.checkgrad:
+                            for p in scf.xc.parameters():
+                                if p.requires_grad:
+                                    print('===========\ngradient\n----------\nmax: {}\nmin: {}'.format(torch.max(p.grad), torch.min(p.grad)))
+                        print("Step Optimizer")
+                        optimizer.step()
+                        print("Zeroing Optimizer Grad")
+                        optimizer.zero_grad()
             except RuntimeError:
                 encountered_nan = True
                 chkpt_idx -= 1
@@ -936,15 +1006,19 @@ if __name__ == '__main__':
             scheduler.step(total_loss)
 
             if args.valtraj:
+                #validation -- symlink current.pt to xc
+                os.symlink(logpath+'_current.pt', os.path.join(args.logpath, 'xc'))
                 val = read(args.valtraj, ':')
 
                 atms = [i for i in val if i.info.get('atomization', None)]
                 bhs = [i for i in val if i.info.get('product', None)]
                 products = list(set([i.info['product'] for i in bhs]))
 
-                atomic_e = get_singles(atms, model=logpath+'_current.pt')
+                atomic_e = get_singles(atms, model=args.logpath, valbasis=args.valbasis,
+                                        valpol = args.valpol, valgridlevel=args.valgridlevel, maxcycle=args.valmaxcycle)
 
-                val_e = get_validation(val, model=logpath+'_current.pt')
+                val_e = get_validation(val, model=args.logpath, valbasis=args.valbasis,
+                                        valpol = args.valpol, valgridlevel=args.valgridlevel, maxcycle=args.valmaxcycle)
 
                 for at in atms:
                     formula = at.get_chemical_formula()

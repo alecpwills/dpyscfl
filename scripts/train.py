@@ -79,6 +79,7 @@ parser.add_argument('--valmaxcycle', action='store', type=int, default=100, help
 parser.add_argument('--noxcdiffpop', action='store_false', default=True, help='If flagged, does NOT pop the molecules that Sebastian popped from his training set.')
 parser.add_argument('--testpop', action='store_true', default=False, help='for testing purposes')
 parser.add_argument('--passthrough', action='store_true', default=False, help='If flagged, first passthrough of the training trajectory just generates losses and does not update the network until the next pass.')
+parser.add_argument('--chkptmax', action='store', default=999999999, type=int, help='If specified, will not continue training after this many checkpoints.')
 args = parser.parse_args()
 
 ttypes = {'float' : torch.float,
@@ -1046,6 +1047,10 @@ if __name__ == '__main__':
                     print("CALCULATED BH: {}".format(bh))
                     print("REFERENCE BH: {}".format(bhr))
                     print("ERROR: |{} - {}| = {}".format(bh, bhr, abs(bh-bhr)))
+
+        if chkpt_idx > args.chkptmax:
+            print("Max checkpoint number reached -- aborting training process.")
+            break
 
                 
                     

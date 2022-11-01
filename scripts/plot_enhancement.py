@@ -75,6 +75,8 @@ def plot_fxc(models, savename, rs = [0.1, 1, 5], s_range=[0, 3], alpha_range=Non
                     libxc = True
                 if model_name[-2:] == '_S' or libxc:
                     method = models[model_name]
+                if model_name == 'XCDiff':
+                    method = models[model_name]
                 else:
                     #models[model_name].exx_a = torch.nn.Parameter(torch.Tensor([0]))
                     method = models[model_name].eval_grid_models
@@ -99,6 +101,8 @@ def plot_fxc(models, savename, rs = [0.1, 1, 5], s_range=[0, 3], alpha_range=Non
         c = 'gray' if len(rs) > 1 or len(alpha_range_) > 1 else 'C{}'.format(idx)
         plt.plot([],label=model_name,color=c,ls=ls)
 
+    plt.ylim(0.9, 1.3)
+    plt.xlim(0, 3)
     plt.ylabel('$F_{xc}$ (a.u.)', fontsize=14)
     plt.xlabel('s', fontsize=14)
     plt.legend()
@@ -117,10 +121,20 @@ if __name__ == '__main__':
     parser.add_argument('--modelpath', action='store', type=str, help='Location of model to be loaded into pytorch to generate factors')
     parser.add_argument('--plotlabel', type=str, default='', help='Specify label for figure.')
     parser.add_argument('--savepref', type=str, default='', help='Save file prefix to be appended when saving the various figures.')
+    parser.add_argument('--xcdiffpath', action='store', type=str, default='', help='Location of xcdiff model to plot')
+    parser.add_argument('--pretrainedpath', action='store', type=str, default='', help='Location of pretrained model to plot alongside')
+    parser.add_argument('--pretrainlab', default='Pre-Trained SCAN', type=str, action='store', help='Label for pretrained model')
     args = parser.parse_args()
 
     xc = torch.load(args.modelpath)
-    dct = {args.plotlabel: xc.xc}
+    dct = {}
+    if args.xcdiffpath:
+        xcd = torch.jit.load(args.xcdiffpath)
+        dct['XCDiff'] = xcd
+    if args.pretrainedpath:
+        ptd = torch.load(args.pretrainedpath)
+        dct[args.pretrainlab] = ptd.xc
+    dct[args.plotlabel] = xc.xc
     plot_fxc(dct, s_range=[0, 3], rs=[1], alpha_range=[0], savename=args.savepref+'_alpha0.pdf')
     plot_fxc(dct, s_range=[0, 3], rs=[1], alpha_range=[1], savename=args.savepref+'_alpha1.pdf')
     plot_fxc(dct, s_range=[0, 3], rs=[1], alpha_range=[10], savename=args.savepref+'_alpha10.pdf')

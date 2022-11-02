@@ -16,11 +16,13 @@ parser = argparse.ArgumentParser(description='Train xc functional')
 parser.add_argument('writeloc', action='store', type=str, help='DIRECTORY location of where to write the MemDatasetWrite. If directory exists, it will just populate with files -- make sure it is unique to the dataset.')
 parser.add_argument('func', action='store', choices=['PBE','SCAN'], help='The XC functional to run for baseline calculations.')
 parser.add_argument('atoms', action='store', type=str, help='Location of the .xyz/.traj file to read into ASE Atoms object, which will be used to generate baseline.')
+parser.add_argument('--basis', metavar='basis', type=str, nargs = '?', default='6-311++G(3df,2pd)', help='basis to use. default 6-311++G(3df,2pd)')
 parser.add_argument('-r', '--ref_path', action='store', default='', help='Location of reference DMs and energies.')
 parser.add_argument('--sequential', action="store_true", help='Whether to get_datapoint individually or use list then write')
 parser.add_argument('--forcepol', action="store_true", default=False, help='If flagged, all calculations spin polarized. Otherwise, spin determines.')
 parser.add_argument('--dfit', action='store_true', default=False, help='Generate density fitting matrices or not')
 parser.add_argument('--mingridlevel', action='store', type=int, default=3, help='Minimum grid level to use in generation of matrices. Defaults to 3, as paper suggests. If atom has larger specified grid_level, larger is used')
+parser.add_argument('--zsymfalse', action='store_false', default=True, help='If flagged, forces no zsym for basis')
 args = parser.parse_args()
 
 
@@ -45,7 +47,7 @@ if __name__ == '__main__':
     #as implemented, pol is always false.
     #in the function call, this is empty
     pol = args.forcepol
-    basis = '6-311++G(3df,2pd)'
+    basis = args.basis
 
     distances = np.arange(len(atoms))
     
@@ -53,7 +55,7 @@ if __name__ == '__main__':
 
     if not args.sequential:
         baseline = [old_get_datapoint(d, basis=basis, grid_level= max(d.info.get('grid_level', 1), args.mingridlevel),
-                                xc=func, zsym=d.info.get('sym',True),
+                                xc=func, zsym=d.info.get('sym',args.zsymfalse),
                                 n_rad=d.info.get('n_rad',30), n_ang=d.info.get('n_ang',15),
                                 init_guess=False, spin = d.info.get('spin',None),
                                 pol=pol, do_fcenter=True,

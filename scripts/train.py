@@ -79,6 +79,7 @@ parser.add_argument('--valmaxcycle', action='store', type=int, default=100, help
 parser.add_argument('--noxcdiffpop', action='store_false', default=True, help='If flagged, does NOT pop the molecules that Sebastian popped from his training set.')
 parser.add_argument('--testpop', action='store_true', default=False, help='for testing purposes')
 parser.add_argument('--passthrough', action='store_true', default=False, help='If flagged, first passthrough of the training trajectory just generates losses and does not update the network until the next pass.')
+parser.add_argument('--subset', action='store_true', default=False, help='If flagged, will use a subset of the dataloader to loop over. Reduces overhead of reading useless files.')
 parser.add_argument('--chkptmax', action='store', default=999999999, type=int, help='If specified, will not continue training after this many checkpoints.')
 args = parser.parse_args()
 
@@ -645,10 +646,14 @@ if __name__ == '__main__':
                     #previously, this looped over the entire Dataset and matched indices contained in molecule list
                     
                     #TEST: loop over everything, not subset
-                    #print("Subsetting Dataset with molecules[{}]: ".format(molecule), molecules[molecule])
-                    #subset = torch.utils.data.Subset(dataset, molecules[molecule])
-                    #subset_loader = torch.utils.data.DataLoader(subset, batch_size=1, shuffle=False)
-                    for idx, data in enumerate(dataloader_train):
+                    if args.subset:
+                        print("Subsetting Dataset with molecules[{}]: ".format(molecule), molecules[molecule])
+                        subset = torch.utils.data.Subset(dataset, molecules[molecule])
+                        subset_loader = torch.utils.data.DataLoader(subset, batch_size=1, shuffle=False)
+                        loader = subset_loader
+                    else:
+                        loader = dataloader_train
+                    for idx, data in enumerate(loader):
                     #for didx, data in enumerate(subset_loader):
                         #idx = molecules[molecule][didx]
 

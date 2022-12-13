@@ -655,7 +655,11 @@ if __name__ == '__main__':
                         loader = dataloader_train
                     for idx, data in enumerate(loader):
                     #for didx, data in enumerate(subset_loader):
-                        #idx = molecules[molecule][didx]
+                        if args.subset:
+                            print("Subset: Reassigning didx <- idx; idx <- molecules[molecule][didx]")
+                            didx = idx
+                            idx = molecules[molecule][didx]
+                            print(didx, idx)
 
                         #skip non-relevant atoms for current calculation
                         if idx not in molecules[molecule]:

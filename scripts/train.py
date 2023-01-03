@@ -604,6 +604,9 @@ if __name__ == '__main__':
             print("NEXT EPOCH BEGINNING - PASSTHROUGH COMPLETE.")
             print("SETTING NETWORK TO TRAINING MODE.")
             scf.xc.train()
+        if epoch == 0:
+            with open(logpath+'_evalloss.dat', 'a') as f:
+                f.write('#epoch\tm_idx\tidx\tat_form\tatsym\t[losskey\tloss\tloss*weight]\n')
         while(encountered_nan):
             error_cnt = 0
             running_losses = {"rho": 0, "ae":0, "E":0}
@@ -905,8 +908,11 @@ if __name__ == '__main__':
                     print("PRED_DICT: ", pred_dict)
                     ael = ae_loss(ref_dict,pred_dict)
                     running_losses['ae'] += ael.item()
-                    aelstr = 'AE loss\t {} \t {} \t {} \t {} \t {}\n'.format(epoch, m_idx, m_form, m_sym, args.ae_weight*ael.item())
+                    aelstr = '{}\t {} \t {} \t {} \t {} \t {}\n'.format(epoch, m_idx, m_form, m_sym, ael.item(), args.ae_weight*ael.item())
                     print(aelstr)
+                    if epoch == 0:
+                        with open(logpath+'_aeloss.dat', 'a') as f:
+                            f.write('#epoch\tm_idx\tm_form\tm_sym\tael\tael*lambda_ae\n')
                     with open(logpath+'_aeloss.dat', 'a') as f:
                         f.write(aelstr)
                     if mol_sc:
@@ -956,12 +962,12 @@ if __name__ == '__main__':
             print("++++++++++++++++++++++++++++++++++")
             if epoch == 0:
                 with open(logpath+'_totallosses.dat', 'w') as f:
-                    wstr = "#\tEpoch\tE\trho\tae\ttotal\n"
+                    wstr = "#\tEpoch\tE\tE*lambda_E\trho\trho*lambda_rho\tae\tae*lambda_ae\ttotal\n"
                     f.write(wstr)
             running_losses = {key:np.sqrt(running_losses[key]/len(molecules))*1000 for key in running_losses}
             total_loss = np.sqrt(total_loss/len(molecules))*1000
             with open(logpath+'_totallosses.dat', 'a') as f:
-                wstr = "{}\t{}\t{}\t{}\t{}\n".format(epoch, running_losses['E']*args.E_weight, running_losses['rho']*args.rho_weight, running_losses['ae']*args.ae_weight, total_loss)
+                wstr = "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(epoch, running_losses['E'], running_losses['E']*args.E_weight, running_losses['rho'], running_losses['rho']*args.rho_weight, running_losses['ae'], running_losses['ae']*args.ae_weight, total_loss)
                 f.write(wstr)
             best_loss = min(total_loss, best_loss)
             chkpt_str = 'NOUPDATE'

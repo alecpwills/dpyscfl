@@ -891,7 +891,7 @@ if __name__ == '__main__':
                         with open(logpath+'_evalloss.dat', 'a') as f:
                             atform = atoms[idx].get_chemical_formula()
                             atsym = atoms[idx].symbols
-                            wstr = '{}\t{}\t{}\t'.format(epoch, atform, atsym)
+                            wstr = '{}\t{}\t{}\t{}\t{}\t'.format(epoch, m_idx, idx, atform, atsym)
                             keys = list(losses_eval.keys())
                             for k in keys:
                                 wstr += '{}\t{}\t'.format(k, losses_eval[k]*losses[k][1])

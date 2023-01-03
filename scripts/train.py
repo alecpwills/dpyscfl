@@ -894,7 +894,7 @@ if __name__ == '__main__':
                             wstr = '{}\t{}\t{}\t{}\t{}\t'.format(epoch, m_idx, idx, atform, atsym)
                             keys = list(losses_eval.keys())
                             for k in keys:
-                                wstr += '{}\t{}\t'.format(k, losses_eval[k]*losses[k][1])
+                                wstr += '{}\t{}\t{}\t'.format(k, losses_eval[k], losses_eval[k]*losses[k][1])
                             wstr+='\n'
                             f.write(wstr)
                     if not results:

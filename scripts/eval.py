@@ -45,6 +45,7 @@ parser.add_argument('--atmflip', action='store_true', default=False, help="If fl
 parser.add_argument('--rho', action='store_true', default=False, help='If flagged, calculate rho loss')
 parser.add_argument('--forceUKS', action='store_true', default=False, help='If flagged, force pyscf method to be UKS.')
 parser.add_argument('--testgen', action='store_true', default=False, help='If flagged, only loops over trajectory to generate mols')
+parser.add_argument('--noloss', action='store_true', default=False, help='If flagged, does not calculate losses with regards to reference trajectories, only predicts and saves prediction files.')
 args = parser.parse_args()
 
 scale = 1
@@ -439,6 +440,7 @@ if __name__ == '__main__':
 
             results['E'] = e_pred
             results['dm'] = dm_pred
+            np.save(os.path.join(wep, '{}_{}.dm.npy'.format(idx, symbols)), dm_pred)
             results['ao_eval'] = ao_eval
             results['mo_occ'] = mf.mo_occ
             #results['mf'] = mf

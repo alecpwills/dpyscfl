@@ -245,7 +245,7 @@ if __name__ == '__main__':
             mult = -1
         else:
             mult = 1
-        ref_atm = [mult*a.info['atomization']/scale for a in atoms]
+        ref_atm = [mult*a.info.get('atomization', 0)/scale for a in atoms]
         try:
             with open('atomicen.pkl', 'rb') as f:
                 atomic_e = pickle.load(f)
@@ -448,19 +448,18 @@ if __name__ == '__main__':
             results['gweights'] = mf.grids.weights
 
         write(os.path.join(wep, 'predictions.traj'), atoms)
-
-        dmp = os.path.join(args.refpath, '{}_{}.dm.npy'.format(idx, symbols))
-        dm_ref = np.load(dmp)
-        e_ref = e_refs[idx]
-        rho_ref = dm_to_rho(dm_ref, ao_evals[idx])
-
+    
         rho_pred = dm_to_rho(pred_dm[idx][1], ao_evals[idx])
+        if not args.noloss:
+            dmp = os.path.join(args.refpath, '{}_{}.dm.npy'.format(idx, symbols))
+            dm_ref = np.load(dmp)
+            rho_ref = dm_to_rho(dm_ref, ao_evals[idx])
+            rho_err = rho_dev(pred_dm[idx][1], nelecs[idx], rho_pred, rho_ref, gweights[idx], mo_occs[idx])
+            rho_errs['rho'].append(rho_err)
+            print("Rho Error: ", rho_err)
 
-        rho_err = rho_dev(pred_dm[idx][1], nelecs[idx], rho_pred, rho_ref, gweights[idx], mo_occs[idx])
-        rho_errs['rho'].append(rho_err)
-        print("Rho Error: ", rho_err)
-        
-        if args.atomization:
+        e_ref = e_refs[idx]        
+        if args.atomization and not args.noloss:
             start = e_pred
             subs = atom.get_chemical_symbols()
             if len(subs) == 1:
@@ -490,49 +489,50 @@ if __name__ == '__main__':
                 with open(predep, 'wb') as file:
                     file.write(pickle.dumps(results))
 
-        ref_dct['E'].append(e_ref)
-        ref_dct['dm'].append(dm_ref)
+        if not args.noloss:
+            ref_dct['E'].append(e_ref)
+            ref_dct['dm'].append(dm_ref)
 
-        pred_dct['E'].append(results['E'])
-        pred_dct['dm'].append(results['dm'])
+            pred_dct['E'].append(results['E'])
+            pred_dct['dm'].append(results['dm'])
 
-        print("Predicted Total Energy for {} : {}".format(formula, results['E']))
-        print("Reference Total Energy for {} : {}".format(formula, e_ref))
-        print("Error: {}".format(results['E'] - e_ref))
+            print("Predicted Total Energy for {} : {}".format(formula, results['E']))
+            print("Reference Total Energy for {} : {}".format(formula, e_ref))
+            print("Error: {}".format(results['E'] - e_ref))
 
 
-        for key in loss_dct.keys():
-            print(key)
-            if key == 'rho':
-                rd = torch.zeros_like(torch.Tensor(rho_errs['rho']))
-                pd = torch.Tensor(rho_errs['rho'])
+            for key in loss_dct.keys():
+                print(key)
+                if key == 'rho':
+                    rd = torch.zeros_like(torch.Tensor(rho_errs['rho']))
+                    pd = torch.Tensor(rho_errs['rho'])
+                else:
+                    rd = torch.Tensor(ref_dct[key])
+                    pd = torch.Tensor(pred_dct[key])
+                loss_dct[key] = loss(rd, pd)
+            
+            loss_dct['rho'] = rho_err
+
+            print("+++++++++++++++++++++++++++++++")
+            print("RUNNING LOSS")
+            print(loss_dct)
+            print("+++++++++++++++++++++++++++++++")
+
+            if args.atomization:
+                writelab = '#Index\tAtomForm\tAtomSymb\tEPred (H)\tERef (H)\tEErr (H)\tRhoErr\tEPAtm (H)\tERAtm (H)\tEAErr (H)\n'
+                writestr = '{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(idx, formula, symbols, \
+                    results['E'], e_ref, results['E']-e_ref, rho_err, results['atm'], ref_atm[idx], results['atm'] - ref_atm[idx])
             else:
-                rd = torch.Tensor(ref_dct[key])
-                pd = torch.Tensor(pred_dct[key])
-            loss_dct[key] = loss(rd, pd)
-        
-        loss_dct['rho'] = rho_err
-
-        print("+++++++++++++++++++++++++++++++")
-        print("RUNNING LOSS")
-        print(loss_dct)
-        print("+++++++++++++++++++++++++++++++")
-
-        if args.atomization:
-            writelab = '#Index\tAtomForm\tAtomSymb\tEPred (H)\tERef (H)\tEErr (H)\tRhoErr\tEPAtm (H)\tERAtm (H)\tEAErr (H)\n'
-            writestr = '{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(idx, formula, symbols, \
-                results['E'], e_ref, results['E']-e_ref, rho_err, results['atm'], ref_atm[idx], results['atm'] - ref_atm[idx])
-        else:
-            writelab = '#Index\tAtom\tEPred (H)\tERef (H)\tEErr (H)\tRhoErr\n'
-            writestr = '{}\t{}\t{}\t{}\t{}\t{}\n'.format(idx, formula, \
-                results['E'], e_ref, results['E']-e_ref, rho_err)
-        if idx == 0:
-            with open(args.writepath+'/table.dat', 'w') as f:
-                f.write(writelab)
-                f.write(writestr)
-        else:
-            with open(args.writepath+'/table.dat', 'a') as f:
-                f.write(writestr)
+                writelab = '#Index\tAtom\tEPred (H)\tERef (H)\tEErr (H)\tRhoErr\n'
+                writestr = '{}\t{}\t{}\t{}\t{}\t{}\n'.format(idx, formula, \
+                    results['E'], e_ref, results['E']-e_ref, rho_err)
+            if idx == 0:
+                with open(args.writepath+'/table.dat', 'w') as f:
+                    f.write(writelab)
+                    f.write(writestr)
+            else:
+                with open(args.writepath+'/table.dat', 'a') as f:
+                    f.write(writestr)
 
 
     with open(args.writepath+'/pred_e.dat', 'w') as f:
@@ -548,19 +548,20 @@ if __name__ == '__main__':
             for k in ks:
                 v = pred_atm[k]
                 f.write("{}\t{}\t{}\t{}\n".format(k, v[0], v[1]. v[2]))
+    if not args.noloss:
+        with open(args.writepath+'/loss_dct_{}.pckl'.format(args.type), 'wb') as file:
+            file.write(pickle.dumps(loss_dct))
+        with open(args.writepath+'/loss_dct_{}.txt'.format(args.type), 'w') as file:
+            for k,v in loss_dct.items():
+                file.write("{} {}\n".format(k,v))
+        if args.writeref and not args.writeeach:
+            with open(args.writepath+'/ref_dct.pckl', 'wb') as file:
+                file.write(pickle.dumps(ref_dct))
 
-    with open(args.writepath+'/loss_dct_{}.pckl'.format(args.type), 'wb') as file:
-        file.write(pickle.dumps(loss_dct))
-    with open(args.writepath+'/loss_dct_{}.txt'.format(args.type), 'w') as file:
-        for k,v in loss_dct.items():
-            file.write("{} {}\n".format(k,v))
     if fails:
         with open(args.writepath+'/fails.txt', 'w') as failfile:
             for idx, failed in fails.enumerate():
                 failfile.write("{} {}\n".format(idx, failed))
-    if args.writeref and not args.writeeach:
-        with open(args.writepath+'/ref_dct.pckl', 'wb') as file:
-            file.write(pickle.dumps(ref_dct))
     if args.writepred and not args.writeeach:
         with open(args.writepath+'/pred_dct_{}.pckl'.format(args.xctype), 'wb') as file:
             file.write(pickle.dumps(pred_dct))

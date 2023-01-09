@@ -184,10 +184,18 @@ spins_dict = {
 
 def get_spin(at):
     #if single atom and spin is not specified in at.info dictionary, use spins_dict
+    print('======================')
+    print("GET SPIN: Atoms Info")
+    print(at)
+    print(at.info)
+    print('======================')
     if ( (len(at.positions) == 1) and not ('spin' in at.info) ):
+        print("Single atom and no spin specified in at.info")
         spin = spins_dict[str(at.symbols)]
     else:
-        if at.info.get('spin', None):
+        print("Not a single atom, or spin in at.info")
+        if type(at.info.get('spin', None)) == type(0):
+            #integer specified in at.info['spin'], so use it
             print('Spin specified in atom info.')
             spin = at.info['spin']
         elif 'radical' in at.info.get('name', ''):
@@ -294,10 +302,10 @@ if __name__ == '__main__':
                 print("Atomic Energy: {} -- {}".format(name, mf.e_tot))
                 print("++++++++++++++++++++++++")
             with open('atomicen.dat', 'w') as f:
-                f.write("#Atom \t Energy (Hartree) \n")
+                f.write("#Atom\tEnergy (Hartree)\n")
                 for k, v in atomic_e.items():
-                    f.write('{} \t {} \n'.format(k, v))
-                    print('{} \t {}'.format(k,v))
+                    f.write('{}\t{}\n'.format(k, v))
+                    print('{}\t{}'.format(k,v))
             with open('atomicen.pkl', 'wb') as f:
                 pickle.dump(atomic_e, f)
 
@@ -416,14 +424,18 @@ if __name__ == '__main__':
             e_pred = mf.e_tot
             dm_pred = mf.make_rdm1()
             rho_pred = dm_to_rho(dm_pred, ao_eval)
-            pred_e[idx] = [formula, e_pred]
-            pred_dm[idx] = [formula, dm_pred]
+            pred_e[idx] = [formula, symbols, e_pred]
+            pred_dm[idx] = [formula, symbols, dm_pred]
             ao_evals[idx] = ao_eval
             mo_occs[idx] = mf.mo_occ
             mfs[idx] = mf
             nelecs[idx] = mol.nelectron
             gweights[idx] = mf.grids.weights
 
+
+            #updating and writing of new information in atom's info dict
+            atom.info['e_pred'] = e_pred
+            write(os.path.join(wep, '{}_{}.traj'.format(idx, symbols)), atom)
 
             results['E'] = e_pred
             results['dm'] = dm_pred
@@ -432,6 +444,8 @@ if __name__ == '__main__':
             #results['mf'] = mf
             results['nelec'] = mol.nelectron
             results['gweights'] = mf.grids.weights
+
+        write(os.path.join(wep, 'predictions.traj'), atoms)
 
         dmp = os.path.join(args.refpath, '{}_{}.dm.npy'.format(idx, symbols))
         dm_ref = np.load(dmp)
@@ -451,7 +465,7 @@ if __name__ == '__main__':
                 #single atom, no atomization needed
                 print("SINGLE ATOM -- NO ATOMIZATION CALCULATION.")
                 results['atm'] = np.nan
-                pred_atm[idx] = [formula, results['atm']]
+                pred_atm[idx] = [formula, symbols, results['atm']]
             else:
                 print("{} ({}) decomposition -> {}".format(formula, start, subs))
                 for s in subs:
@@ -460,7 +474,7 @@ if __name__ == '__main__':
                 print("Predicted Atomization Energy for {} : {}".format(formula, start))
                 print("Reference Atomization Energy for {} : {}".format(formula, ref_atm[idx]))
                 results['atm'] = start
-                pred_atm[idx] = [formula, results['atm']]
+                pred_atm[idx] = [formula, symbols, results['atm']]
                 ref_dct['atm'].append(ref_atm[idx])
                 pred_dct['atm'].append(results['atm'])
                 print("Error: {}".format(start - ref_atm[idx]))
@@ -503,12 +517,12 @@ if __name__ == '__main__':
         print("+++++++++++++++++++++++++++++++")
 
         if args.atomization:
-            writelab = '#Index \t Atom \t EPred (H) \t ERef (H) \t EErr (H) \t RhoErr \t EPAtm (H) \t ERAtm (H) \t EAErr (H)\n'
-            writestr = '{} \t {} \t {} \t {} \t {} \t {} \t {} \t {} \t {}\n'.format(idx, formula, \
+            writelab = '#Index\tAtomForm\tAtomSymb\tEPred (H)\tERef (H)\tEErr (H)\tRhoErr\tEPAtm (H)\tERAtm (H)\tEAErr (H)\n'
+            writestr = '{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(idx, formula, symbols, \
                 results['E'], e_ref, results['E']-e_ref, rho_err, results['atm'], ref_atm[idx], results['atm'] - ref_atm[idx])
         else:
-            writelab = '#Index \t Atom \t EPred (H) \t ERef (H) \t EErr (H) \t RhoErr \n'
-            writestr = '{} \t {} \t {} \t {} \t {} \t {}\n'.format(idx, formula, \
+            writelab = '#Index\tAtom\tEPred (H)\tERef (H)\tEErr (H)\tRhoErr\n'
+            writestr = '{}\t{}\t{}\t{}\t{}\t{}\n'.format(idx, formula, \
                 results['E'], e_ref, results['E']-e_ref, rho_err)
         if idx == 0:
             with open(args.writepath+'/table.dat', 'w') as f:
@@ -520,18 +534,18 @@ if __name__ == '__main__':
 
 
     with open(args.writepath+'/pred_e.dat', 'w') as f:
-        f.write("#Index \t Atom \t Energy (Hartree) \n")
+        f.write("#Index\tAtomForm\tAtomSymb\tEnergy (Hartree)\n")
         ks = sorted(list(pred_e.keys()))
         for idx, k in enumerate(pred_e):
                 v = pred_e[k]
-                f.write("{} \t {} \t {} \n".format(k, v[0], v[1]))
+                f.write("{}\t{}\t{}\t{}\n".format(k, v[0], v[1]. v[2]))
     if args.atomization:
         with open(args.writepath+'/pred_atm.dat', 'w') as f:
-            f.write("#Index \t Atom \t Atomization Energy (Hartree) \n")
+            f.write("#Index\tAtomForm\tAtomSymb\tAtomization Energy (Hartree)\n")
             ks = sorted(list(pred_atm.keys()))
             for k in ks:
                 v = pred_atm[k]
-                f.write("{} \t {} \t {} \n".format(k, v[0], v[1]))
+                f.write("{}\t{}\t{}\t{}\n".format(k, v[0], v[1]. v[2]))
 
     with open(args.writepath+'/loss_dct_{}.pckl'.format(args.type), 'wb') as file:
         file.write(pickle.dumps(loss_dct))

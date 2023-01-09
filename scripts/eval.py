@@ -180,7 +180,14 @@ spins_dict = {
     'N': 3,
     'O': 2,
     'P': 3,
-    'S': 2
+    'S': 2,
+    'Ar':0, #noble
+    'Br':1, #one unpaired electron
+    'Ne':0, #noble
+    'Sb':3, #same column as N/P
+    'Bi':3, #same column as N/P/Sb
+    'Te':2, #same column as O/S
+    'I':1 #one unpaired electron
 }
 
 def get_spin(at):

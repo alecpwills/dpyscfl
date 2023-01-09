@@ -456,12 +456,12 @@ if __name__ == '__main__':
 
         write(os.path.join(wep, 'predictions.traj'), atoms)
     
-        rho_pred = dm_to_rho(pred_dm[idx][1], ao_evals[idx])
+        rho_pred = dm_to_rho(pred_dm[idx][2], ao_evals[idx])
         if not args.noloss:
             dmp = os.path.join(args.refpath, '{}_{}.dm.npy'.format(idx, symbols))
             dm_ref = np.load(dmp)
             rho_ref = dm_to_rho(dm_ref, ao_evals[idx])
-            rho_err = rho_dev(pred_dm[idx][1], nelecs[idx], rho_pred, rho_ref, gweights[idx], mo_occs[idx])
+            rho_err = rho_dev(pred_dm[idx][2], nelecs[idx], rho_pred, rho_ref, gweights[idx], mo_occs[idx])
             rho_errs['rho'].append(rho_err)
             print("Rho Error: ", rho_err)
 

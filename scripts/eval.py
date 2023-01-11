@@ -450,6 +450,7 @@ if __name__ == '__main__':
             np.save(os.path.join(wep, '{}_{}.dm.npy'.format(idx, symbols)), dm_pred)
             results['ao_eval'] = ao_eval
             results['mo_occ'] = mf.mo_occ
+            results['mo_coeff'] = mf.mo_coeff
             #results['mf'] = mf
             results['nelec'] = mol.nelectron
             results['gweights'] = mf.grids.weights
@@ -490,6 +491,9 @@ if __name__ == '__main__':
         
 
         if args.writeeach:
+            #must omit density matrix and ao_eval, can't pickle something larger than 4GB
+            #dm saved separately anyway.
+            writeres = {k:results[k] for k in results.keys() if k not in ['dm', 'ao_eval', 'gweights']}
             wep = os.path.join(args.writepath, args.writeeach)
             if args.writepred:
                 predep = os.path.join(wep, '{}_{}.pckl'.format(idx, symbols))

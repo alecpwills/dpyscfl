@@ -498,7 +498,7 @@ if __name__ == '__main__':
             if args.writepred:
                 predep = os.path.join(wep, '{}_{}.pckl'.format(idx, symbols))
                 with open(predep, 'wb') as file:
-                    file.write(pickle.dumps(results))
+                    file.write(pickle.dumps(writeres))
 
         if not args.noloss:
             ref_dct['E'].append(e_ref)

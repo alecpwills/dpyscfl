@@ -37,6 +37,12 @@ def energy_loss(results, loss, **kwargs):
     dE = weights*(E_ref - E)
     dE = dE[skip_steps:]
     ldE = loss(dE, torch.zeros_like(dE))
+    print('+++++++++++++++++++++++++++++++')
+    print("Energy Loss Call: Summary")
+    print('E: {}\tE_ref: {}'.format(E, E_ref))
+    print('Weights: {}\tskip_steps: {}'.format(weights, skip_steps))
+    print('dE: {}\tloss: {}'.format(dE, ldE))
+    print('+++++++++++++++++++++++++++++++')
     return ldE
 
 def econv_loss(results, loss, **kwargs):
@@ -128,6 +134,10 @@ def rho_loss(results, loss, **kwargs):
             print("NAN IN RHO LOSS. SETTING DRHO ZERO.")
             drho = torch.Tensor([0])
         lrho = loss(drho, torch.zeros_like(drho))
+    print('+++++++++++++++++++++++++++++++')
+    print('Rho Loss Call Summary')
+    print('Loss: {}'.format(lrho))
+    print('+++++++++++++++++++++++++++++++')
     return lrho
 
 def rho_alt_loss(results, loss, **kwargs):
@@ -265,14 +275,17 @@ def atomization_energies(energies):
             #if len(split(key)) == 1:continue
             e_tot = torch.clone(energies[key])
             e_tot_size = e_tot.size()
+            e_tot_key = key
         else:
             e_tot = np.array(energies[key])
             e_tot_size = e_tot.shape
+            e_tot_key = key
         symsplit = split(key)
         #If it is an AA reaction, energy difference between same species configurations.
         #Don't subtract A off twice, subtract AA-A for the target energy difference.
         if symsplit == ['A', 'A']:
             symsplit = ['A']
+        print('AE Loss Call: Key/Energy Start ', key, e_tot)
         for symbol in symsplit:
             #if single atom, continue
             if len(split(key)) == 1: continue
@@ -282,8 +295,9 @@ def atomization_energies(energies):
                 e_tot -= e_sub
             else:
                 e_tot -= e_sub[-1:]
-            print('{} - {}: {}'.format(key, symbol, e_tot))
+            print('{} - {}: {} - {} = {}'.format(e_tot_key, symbol, e_tot + energies[symbol], energies[symbol], e_tot))
             ae[key] = e_tot
+            print('AE Loss Result: ', ae)
     if ae == {}:
         #empty dict -- no splitting occurred, so single atom
         ae[key] = e_tot

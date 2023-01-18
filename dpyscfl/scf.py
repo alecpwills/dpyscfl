@@ -319,7 +319,7 @@ class SCF(torch.nn.Module):
 
             e_tot = self.energy_tot(dm_old, hc, veff-vxc)+ e_nuc + exc
             E.append(e_tot)
-            print("{} Energy: {}".format(e_tot))
+            print("{} Energy: {}".format(step, e_tot))
             print("History: {}".format(E))
             if not sc:
                 break

@@ -192,7 +192,7 @@ class SCF(torch.nn.Module):
         self.xc = xc
         #ncore parameter used in xcdiff, not here
 
-    def forward(self, dm, matrices, sc=True):
+    def forward(self, dm, matrices, sc=True, **kwargs):
         """Forward pass SCF cycle
 
         Args:
@@ -253,12 +253,15 @@ class SCF(torch.nn.Module):
         #     create_graph = False
         # else:
         #     create_graph = True
-
+        vvv = kwargs.get('verbose', False)
+        if vvv:
+            print('SCF Loop Beginning: {} Steps'.format(nsteps))
 
         # SCF iteration loop
         for step in range(nsteps):
             #some diis happens here in xcdiff, not implemented here
-
+            if vvv:
+                print('Step {}'.format(step))
             alpha = (self.alpha)**(step)+0.3
             beta = (1-alpha)
             dm = alpha * dm + beta * dm_old
@@ -316,6 +319,8 @@ class SCF(torch.nn.Module):
 
             e_tot = self.energy_tot(dm_old, hc, veff-vxc)+ e_nuc + exc
             E.append(e_tot)
+            print("{} Energy: {}".format(e_tot))
+            print("History: {}".format(E))
             if not sc:
                 break
 

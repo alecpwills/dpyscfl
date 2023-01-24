@@ -3,20 +3,10 @@ from pyscf import gto,dft,scf
 import argparse
 import torch
 torch.set_default_dtype(torch.double)
-import pyscf
-from pyscf import gto,dft,scf
 import matplotlib.pyplot as plt
 import numpy as np
-import scipy
-from ase import Atoms
-from ase.io import read
-from dpyscfl.net import * 
-from dpyscfl.scf import * 
-from dpyscfl.utils import *
-from dpyscfl.losses import *
-from pyscf.cc import CCSD
-from functools import partial
-from ase.units import Bohr
+from dpyscfl.net import get_scf
+from dpyscf.net import lite_get_scf
 from itertools import cycle
 DEVICE='cpu'
 
@@ -126,18 +116,22 @@ if __name__ == '__main__':
     parser.add_argument('--pretrainedpath', action='store', type=str, default='', help='Location of pretrained model to plot alongside')
     parser.add_argument('--pretrainedtype', default='MGGA', action='store', type=str, help='Type of pretrained network loaded -- (M)GGA')
     parser.add_argument('--pretrainlab', default='Pre-Trained SCAN', type=str, action='store', help='Label for pretrained model')
+    parser.add_argument('--ogscf', default=False, action='store_true', help='If flagged, uses the older DPyscf framework to get_scf and evaluate')
     args = parser.parse_args()
 
     dct = {}
+    if args.ogscf:
+        print('Using older dpyscf to load in the network.')
+    func = lite_get_scf if args.ogscf else get_scf
     if args.xcdiffpath:
         #xcd = torch.jit.load(args.xcdiffpath)
-        xcd = get_scf(xctype='MGGA', path=args.xcdiffpath)
+        xcd = func(xctype='MGGA', path=args.xcdiffpath)
         dct['XCDiff'] = xcd.xc.eval_grid_models
     if args.pretrainedpath:
-        ptd = get_scf(xctype=args.pretrainedtype, pretrain_loc=args.pretrainedpath)
+        ptd = func(xctype=args.pretrainedtype, pretrain_loc=args.pretrainedpath)
         dct[args.pretrainlab] = ptd.xc
     if args.modelpath:
-        xc = get_scf(xctype=args.modeltype, path=args.modelpath)
+        xc = func(xctype=args.modeltype, path=args.modelpath)
         dct[args.plotlabel] = xc.xc
     plot_fxc(dct, s_range=[0, 3], rs=[1], alpha_range=[0], savename=args.savepref+'_alpha0.pdf')
     plot_fxc(dct, s_range=[0, 3], rs=[1], alpha_range=[1], savename=args.savepref+'_alpha1.pdf')

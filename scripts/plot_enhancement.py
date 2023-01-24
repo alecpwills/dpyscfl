@@ -90,8 +90,8 @@ def plot_fxc(models, savename, rs = [0.1, 1, 5], s_range=[0, 3], alpha_range=Non
 #                 e_heg = models[model_name].heg_model(rho).squeeze().detach().numpy()
                 ax = plt.plot(s, exc/e_heg,
                      label = l, color='C{}'.format(idx),ls = ls,lw=lw)
-                np.save(savename.split('.')[0]+'_x.npy', s)
-                np.save(savename.split('.')[0]+'_y.npy', exc/e_heg)
+                np.save(savename.split('.')[0]+'_'+model_name+'_x.npy', s)
+                np.save(savename.split('.')[0]+'_'+model_name+'_y.npy', exc/e_heg)
                 if len(rs) == 1 and (alpha_range is None or  len(alpha_range) == 1):
                     idx+=1
             idx+=1
@@ -119,22 +119,26 @@ def plot_fxc(models, savename, rs = [0.1, 1, 5], s_range=[0, 3], alpha_range=Non
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train xc functional')
     parser.add_argument('--modelpath', action='store', type=str, help='Location of model to be loaded into pytorch to generate factors')
+    parser.add_argument('--modeltype', default='MGGA', action='store', type=str, help='Type of network loaded -- (M)GGA')
     parser.add_argument('--plotlabel', type=str, default='', help='Specify label for figure.')
     parser.add_argument('--savepref', type=str, default='', help='Save file prefix to be appended when saving the various figures.')
     parser.add_argument('--xcdiffpath', action='store', type=str, default='', help='Location of xcdiff model to plot')
     parser.add_argument('--pretrainedpath', action='store', type=str, default='', help='Location of pretrained model to plot alongside')
+    parser.add_argument('--pretrainedtype', default='MGGA', action='store', type=str, help='Type of pretrained network loaded -- (M)GGA')
     parser.add_argument('--pretrainlab', default='Pre-Trained SCAN', type=str, action='store', help='Label for pretrained model')
     args = parser.parse_args()
 
-    xc = torch.load(args.modelpath)
     dct = {}
     if args.xcdiffpath:
-        xcd = torch.jit.load(args.xcdiffpath)
-        dct['XCDiff'] = xcd
+        #xcd = torch.jit.load(args.xcdiffpath)
+        xcd = get_scf(xctype='MGGA', path=args.xcdiffpath)
+        dct['XCDiff'] = xcd.xc.eval_grid_models
     if args.pretrainedpath:
-        ptd = torch.load(args.pretrainedpath)
+        ptd = get_scf(xctype=args.pretrainedtype, pretrain_loc=args.pretrainedpath)
         dct[args.pretrainlab] = ptd.xc
-    dct[args.plotlabel] = xc.xc
+    if args.modelpath:
+        xc = get_scf(xctype=args.modeltype, path=args.modelpath)
+        dct[args.plotlabel] = xc.xc
     plot_fxc(dct, s_range=[0, 3], rs=[1], alpha_range=[0], savename=args.savepref+'_alpha0.pdf')
     plot_fxc(dct, s_range=[0, 3], rs=[1], alpha_range=[1], savename=args.savepref+'_alpha1.pdf')
     plot_fxc(dct, s_range=[0, 3], rs=[1], alpha_range=[10], savename=args.savepref+'_alpha10.pdf')

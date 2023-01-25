@@ -2,9 +2,9 @@
 # coding: utf-8
 import torch
 torch.set_default_dtype(torch.float)
-import pylibnxc
-from time import time
+from pylibnxc.pyscf import RKS, UKS
 import numpy as np
+from time import time
 from ase.io import read, write
 from ase import Atoms
 from dpyscfl.net import *
@@ -85,84 +85,6 @@ def rho_dev(dm, nelec, rho, rho_ref, grid_weights, mo_occ):
     return drho
 
 
-def KS(mol, method, model_path='', nxc_kind='grid', **kwargs):
-    """ Wrapper for the pyscf RKS and UKS class
-    that uses a libnxc functionals
-    """
-    #hyb = kwargs.get('hyb', 0)
-    mf = method(mol, **kwargs)
-    if model_path != '':
-        if nxc_kind.lower() == 'atomic':
-            model = get_nxc_adapter('pyscf', model_path)
-            mf.get_veff = veff_mod_atomic(mf, model)
-        elif nxc_kind.lower() == 'grid':
-            parsed_xc = pylibnxc.pyscf.utils.parse_xc_code(model_path)
-            dft.libxc.define_xc_(mf._numint,
-                                 eval_xc,
-                                 pylibnxc.pyscf.utils.find_max_level(parsed_xc),
-                                 hyb=parsed_xc[0][0])
-            mf.xc = model_path
-        else:
-            raise ValueError(
-                "{} not a valid nxc_kind. Valid options are 'atomic' or 'grid'"
-                .format(nxc_kind))
-    return mf
-
-
-def eval_xc(xc_code, rho, spin=0, relativity=0, deriv=1, verbose=None):
-    """ Evaluation for grid-based models (not atomic)
-        See pyscf documentation of eval_xc
-    """
-    inp = {}
-    if spin == 0:
-        if rho.ndim == 1:
-            rho = rho.reshape(1, -1)
-        inp['rho'] = rho[0]
-        if len(rho) > 1:
-            dx, dy, dz = rho[1:4]
-            gamma = (dx**2 + dy**2 + dz**2)
-            inp['sigma'] = gamma
-        if len(rho) > 4:
-            inp['lapl'] = rho[4]
-            inp['tau'] = rho[5]
-    else:
-        rho_a, rho_b = rho
-        if rho_a.ndim == 1:
-            rho_a = rho_a.reshape(1, -1)
-            rho_b = rho_b.reshape(1, -1)
-        inp['rho'] = np.stack([rho_a[0], rho_b[0]])
-        if len(rho_a) > 1:
-            dxa, dya, dza = rho_a[1:4]
-            dxb, dyb, dzb = rho_b[1:4]
-            gamma_a = (dxa**2 + dya**2 + dza**2)  #compute contracted gradients
-            gamma_b = (dxb**2 + dyb**2 + dzb**2)
-            gamma_ab = (dxb * dxa + dyb * dya + dzb * dza)
-            inp['sigma'] = np.stack([gamma_a, gamma_ab, gamma_b])
-        if len(rho_a) > 4:
-            inp['lapl'] = np.stack([rho_a[4], rho_b[4]])
-            inp['tau'] = np.stack([rho_a[5], rho_b[5]])
-
-    parsed_xc = pylibnxc.pyscf.utils.parse_xc_code(xc_code)
-    total_output = {'v' + key: 0.0 for key in inp}
-    total_output['zk'] = 0
-    #print(parsed_xc)
-    for code, factor in parsed_xc[1]:
-        model = pylibnxc.LibNXCFunctional(xc_code, kind='grid')
-        output = model.compute(inp)
-        for key in output:
-            if output[key] is not None:
-                total_output[key] += output[key] * factor
-
-    exc, vlapl, vtau, vrho, vsigma = [total_output.get(key,None)\
-      for key in ['zk','vlapl','vtau','vrho','vsigma']]
-
-    vxc = (vrho, vsigma, vlapl, vtau)
-    fxc = None  # 2nd order functional derivative
-    kxc = None  # 3rd order functional derivative
-    return exc, vxc, fxc, kxc
-
-
-
 skipidcs = args.skipidcs if args.skipidcs else []
 skipforms = args.skipforms if args.skipforms else []
 
@@ -219,10 +141,27 @@ def get_spin(at):
     return spin
 
 if __name__ == '__main__':
-
     #script start time
     start = time()
     times_dct = {'start':start}
+    #Pylibnxc uses (M)GGA_XC_CUSTOM flag to look for custom model in current working directory, so if modelpath is flagged, create the directory and symlink
+    if args.modelpath:
+        modtype = args.type.upper()
+        xcp = '{}_XC_CUSTOM'.format(modtype)
+        try:
+            print('Attempting directory creation...')
+            os.mkdir(xcp)
+        except:
+            print('os.mkdir failed, directory likely exists.')
+            pass
+        
+        try:
+            print('Symlinking {} to {}'.format(args.modelpath, os.path.join(xcp, 'xc')))
+            os.symlink(args.modelpath, os.path.join(xcp, 'xc'))
+        except:
+            print('Symlink failed. Another model might be symlinked already.')
+            pass
+            
 
     with open('unconv','w') as ucfile:
         ucfile.write('#idx\tatoms.symbols\txc_fail\txc_fail_en\txc_bckp\txc_bckp_en\n')
@@ -236,34 +175,24 @@ if __name__ == '__main__':
     atomsp = os.path.join(args.refpath, args.reftraj)
     print("READING TESTING TRAJECTORY: {}".format(atomsp))
     atoms = read(atomsp, ':')
-    e_refs = []
-    for idx, at in enumerate(atoms):
-        print("Getting energies -- {}: {}".format(idx, at.get_chemical_formula()))
-        try:
-            if len(at.positions) > 1:
-                e_refs.append(at.info['energy']/scale)
-            else:
-                e_refs.append(at.calc.results['energy'])
-        except:
-            e_refs.append(at.info['energy']/scale)
-
-    e_refs = [a.info['energy']/scale for a in atoms]
     indices = np.arange(len(atoms)).tolist()
     
     if args.atomization:
         #try to read previous calc
         #temp fix, negative sign because that's what the training assumes
         #or if already flipped, don't flip
-        if args.atmflip:
-            mult = -1
+
+        if args.forceUKS:
+            ipol = True
+            KS = UKS
         else:
-            mult = 1
-        ref_atm = [mult*a.info.get('atomization', 0)/scale for a in atoms]
+            ipol = False
+            KS = RKS
+
         try:
             with open('atomicen.pkl', 'rb') as f:
                 atomic_e = pickle.load(f)
             atomic_end = time()
-
         except:
             print("ATOMIZATION ENERGY FLAGGED -- CALCULATING SINGLE ATOM ENERGIES")
             atomic_set = []
@@ -276,22 +205,21 @@ if __name__ == '__main__':
             atomic = [Atoms(symbols=s) for s in atomic_set]
             #generates pyscf mol, default basis 6-311++G(3df,2pd), charge=0, spin=None
             atomic_mol = [ase_atoms_to_mol(at, basis=args.basis, spin=get_spin(at), charge=0) for at in atomic]
-            if args.forceUKS:
-                ipol = True
-            else:
-                ipol = False
             atomic_method = [gen_mf_mol(mol[1], xc='notnull', pol=ipol, grid_level=args.gridlevel, nxc=True) for mol in atomic_mol]
+            #begin atomic calculations
             atomic_start = time() - start
             for idx, methodtup in enumerate(atomic_method):
                 print(idx, methodtup)
+
                 name, mol = atomic_mol[idx]
                 method = methodtup[1]
                 this_mol_time_start = time()
                 times_dct[idx] = [name]
                 times_dct[idx].append(this_mol_time_start)
 
+
                 if args.modelpath:
-                    mf = KS(mol, method, model_path=args.modelpath)
+                    mf = KS(mol, nxc=xcp, nxc_kind='grid')
                 else:
                     mf = method(mol)
                     mf.xc = args.xc
@@ -344,8 +272,9 @@ if __name__ == '__main__':
                     if k in ['start', 'end']:
                         continue
                     f.write('{}\t{}\t{}\t{}\n'.format(k, v[0], v[1], v[2]))
+                    
 
-    ref_dct = {'E':[], 'dm':[], 'mo_e':[]}
+
     pred_dct = {'E':[], 'dm':[], 'mo_e':[]}
     pred_e = {idx:0 for idx in range(len(atoms))}
     pred_dm = {idx:0 for idx in range(len(atoms))}
@@ -354,20 +283,15 @@ if __name__ == '__main__':
     mfs = {idx:0 for idx in range(len(atoms))}
     nelecs = {idx:0 for idx in range(len(atoms))}
     gweights = {idx:0 for idx in range(len(atoms))}
-    loss = torch.nn.MSELoss()
-#    loss_dct = {k: 0 for k,v in ref_dct.items()}
-    loss_dct = {"E":0, 'rho':0}
-    rho_errs = {'rho':[]}
+
     if args.atomization:
         pred_atm = {idx:0 for idx in range(len(atoms))}
-        ref_dct['atm'] = []
         pred_dct['atm'] = []
-        loss_dct['atm'] = 0
 
     fails = []
-    grid_level = 5 if args.xc else 0
+    grid_level = 5 if args.xc else 3
     endidx = len(atoms) if args.endidx == -1 else args.endidx
-    molecule_start = time() - atomic_end
+    molecule_start = time()
     times_dct = {'start':molecule_start}
     for idx, atom in enumerate(atoms):
         this_mol_time_start = time()
@@ -375,6 +299,7 @@ if __name__ == '__main__':
         symbols = atom.symbols
         times_dct[idx] = [formula, symbols]
         times_dct[idx].append(this_mol_time_start)
+
         if idx < args.startidx:
             continue
         if idx > endidx:
@@ -434,7 +359,7 @@ if __name__ == '__main__':
                 ipol = False
             _, method = gen_mf_mol(mol, xc='notnull', pol=ipol, grid_level=args.gridlevel, nxc=True)
             if args.modelpath:
-                mf = KS(mol, method, model_path=args.modelpath)
+                mf = KS(mol, nxc=xcp, nxc_kind='grid')
             else:
                 mf = method(mol)
                 mf.xc = args.xc
@@ -459,6 +384,7 @@ if __name__ == '__main__':
                             ucfile.write('{}\t{}\t{}\t{}\t{}\t{}\n'.format(idx, atom.symbols, args.xc, mf.e_tot, 'pbe', mfp.e_tot))
 
                         mf = mfp
+            
 
             this_mol_time_end = time() - this_mol_time_start
             times_dct[idx].append(this_mol_time_end)
@@ -469,10 +395,6 @@ if __name__ == '__main__':
             pred_e[idx] = [formula, symbols, e_pred]
             pred_dm[idx] = [formula, symbols, dm_pred]
             ao_evals[idx] = ao_eval
-            mo_occs[idx] = mf.mo_occ
-            mfs[idx] = mf
-            nelecs[idx] = mol.nelectron
-            gweights[idx] = mf.grids.weights
 
             print("++++++++++++++++++++++++")
             print("Molecular Energy: {}/{} -- {}".format(formula, symbols, mf.e_tot))
@@ -485,48 +407,9 @@ if __name__ == '__main__':
             write(os.path.join(wep, '{}_{}.traj'.format(idx, symbols)), atom)
 
             results['E'] = e_pred
-            results['dm'] = dm_pred
             np.save(os.path.join(wep, '{}_{}.dm.npy'.format(idx, symbols)), dm_pred)
-            results['ao_eval'] = ao_eval
-            results['mo_occ'] = mf.mo_occ
-            results['mo_coeff'] = mf.mo_coeff
-            #results['mf'] = mf
-            results['nelec'] = mol.nelectron
-            results['gweights'] = mf.grids.weights
 
-    
         rho_pred = dm_to_rho(pred_dm[idx][2], ao_evals[idx])
-        if not args.noloss:
-            dmp = os.path.join(args.refpath, '{}_{}.dm.npy'.format(idx, symbols))
-            dm_ref = np.load(dmp)
-            rho_ref = dm_to_rho(dm_ref, ao_evals[idx])
-            rho_err = rho_dev(pred_dm[idx][2], nelecs[idx], rho_pred, rho_ref, gweights[idx], mo_occs[idx])
-            rho_errs['rho'].append(rho_err)
-            print("Rho Error: ", rho_err)
-
-        e_ref = e_refs[idx]        
-        if args.atomization and not args.noloss:
-            start = e_pred
-            subs = atom.get_chemical_symbols()
-            if len(subs) == 1:
-                #single atom, no atomization needed
-                print("SINGLE ATOM -- NO ATOMIZATION CALCULATION.")
-                results['atm'] = np.nan
-                pred_atm[idx] = [formula, symbols, results['atm']]
-            else:
-                print("{} ({}) decomposition -> {}".format(formula, start, subs))
-                for s in subs:
-                    print("{} - {} ::: {} - {} = {}".format(formula, s, start, atomic_e[s], start - atomic_e[s]))
-                    start -= atomic_e[s]
-                print("Predicted Atomization Energy for {} : {}".format(formula, start))
-                print("Reference Atomization Energy for {} : {}".format(formula, ref_atm[idx]))
-                results['atm'] = start
-                pred_atm[idx] = [formula, symbols, results['atm']]
-                ref_dct['atm'].append(ref_atm[idx])
-                pred_dct['atm'].append(results['atm'])
-                print("Error: {}".format(start - ref_atm[idx]))
-
-        
 
         if args.writeeach:
             #must omit density matrix and ao_eval, can't pickle something larger than 4GB
@@ -537,51 +420,6 @@ if __name__ == '__main__':
                 predep = os.path.join(wep, '{}_{}.pckl'.format(idx, symbols))
                 with open(predep, 'wb') as file:
                     file.write(pickle.dumps(writeres))
-
-        if not args.noloss:
-            ref_dct['E'].append(e_ref)
-            ref_dct['dm'].append(dm_ref)
-
-            pred_dct['E'].append(results['E'])
-            pred_dct['dm'].append(results['dm'])
-
-            print("Predicted Total Energy for {} : {}".format(formula, results['E']))
-            print("Reference Total Energy for {} : {}".format(formula, e_ref))
-            print("Error: {}".format(results['E'] - e_ref))
-
-
-            for key in loss_dct.keys():
-                print(key)
-                if key == 'rho':
-                    rd = torch.zeros_like(torch.Tensor(rho_errs['rho']))
-                    pd = torch.Tensor(rho_errs['rho'])
-                else:
-                    rd = torch.Tensor(ref_dct[key])
-                    pd = torch.Tensor(pred_dct[key])
-                loss_dct[key] = loss(rd, pd)
-            
-            loss_dct['rho'] = rho_err
-
-            print("+++++++++++++++++++++++++++++++")
-            print("RUNNING LOSS")
-            print(loss_dct)
-            print("+++++++++++++++++++++++++++++++")
-
-            if args.atomization:
-                writelab = '#Index\tAtomForm\tAtomSymb\tEPred (H)\tERef (H)\tEErr (H)\tRhoErr\tEPAtm (H)\tERAtm (H)\tEAErr (H)\n'
-                writestr = '{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(idx, formula, symbols, \
-                    results['E'], e_ref, results['E']-e_ref, rho_err, results['atm'], ref_atm[idx], results['atm'] - ref_atm[idx])
-            else:
-                writelab = '#Index\tAtom\tEPred (H)\tERef (H)\tEErr (H)\tRhoErr\n'
-                writestr = '{}\t{}\t{}\t{}\t{}\t{}\n'.format(idx, formula, \
-                    results['E'], e_ref, results['E']-e_ref, rho_err)
-            if idx == 0:
-                with open(args.writepath+'/table.dat', 'w') as f:
-                    f.write(writelab)
-                    f.write(writestr)
-            else:
-                with open(args.writepath+'/table.dat', 'a') as f:
-                    f.write(writestr)
     write(os.path.join(wep, 'predictions.traj'), atoms)
 
     molecule_end = time() - molecule_start
@@ -596,30 +434,12 @@ if __name__ == '__main__':
                 continue
             f.write('{}\t{}\t{}\t{}\t{}\n'.format(k, v[0], v[1], v[2], v[3]))
 
-
     with open(args.writepath+'/pred_e.dat', 'w') as f:
-        f.write("#Index\tAtomForm\tAtomSymb\tEnergy (Hartree)\n")
+        f.write("#Index\tAtomForm\tAtomSymb\tPredicted Energy (Hartree)\n")
         ks = sorted(list(pred_e.keys()))
         for idx, k in enumerate(pred_e):
                 v = pred_e[k]
-                f.write("{}\t{}\t{}\t{}\n".format(k, v[0], v[1]. v[2]))
-    if args.atomization:
-        with open(args.writepath+'/pred_atm.dat', 'w') as f:
-            f.write("#Index\tAtomForm\tAtomSymb\tAtomization Energy (Hartree)\n")
-            ks = sorted(list(pred_atm.keys()))
-            for k in ks:
-                v = pred_atm[k]
                 f.write("{}\t{}\t{}\t{}\n".format(k, v[0], v[1], v[2]))
-    if not args.noloss:
-        with open(args.writepath+'/loss_dct_{}.pckl'.format(args.type), 'wb') as file:
-            file.write(pickle.dumps(loss_dct))
-        with open(args.writepath+'/loss_dct_{}.txt'.format(args.type), 'w') as file:
-            for k,v in loss_dct.items():
-                file.write("{} {}\n".format(k,v))
-        if args.writeref and not args.writeeach:
-            with open(args.writepath+'/ref_dct.pckl', 'wb') as file:
-                file.write(pickle.dumps(ref_dct))
-
     if fails:
         with open(args.writepath+'/fails.txt', 'w') as failfile:
             for idx, failed in fails.enumerate():

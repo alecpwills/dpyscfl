@@ -602,7 +602,7 @@ if __name__ == '__main__':
         ks = sorted(list(pred_e.keys()))
         for idx, k in enumerate(pred_e):
                 v = pred_e[k]
-                f.write("{}\t{}\t{}\t{}\n".format(k, v[0], v[1]. v[2]))
+                f.write("{}\t{}\t{}\t{}\n".format(k, v[0], v[1], v[2]))
     if args.atomization:
         with open(args.writepath+'/pred_atm.dat', 'w') as f:
             f.write("#Index\tAtomForm\tAtomSymb\tAtomization Energy (Hartree)\n")

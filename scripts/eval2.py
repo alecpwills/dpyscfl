@@ -355,8 +355,10 @@ if __name__ == '__main__':
                 continue
             if args.forceUKS:
                 ipol = True
+                KS = UKS
             else:
                 ipol = False
+                KS = RKS
             _, method = gen_mf_mol(mol, xc='notnull', pol=ipol, grid_level=args.gridlevel, nxc=True)
             if args.modelpath:
                 mf = KS(mol, nxc=xcp, nxc_kind='grid')

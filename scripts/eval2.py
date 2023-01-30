@@ -23,30 +23,20 @@ parser.add_argument('--pretrain_loc', action='store', type=str, help='Location o
 parser.add_argument('--type', action='store', choices=['GGA','MGGA'])
 parser.add_argument('--xc', action="store", default='', type=str, help='XC to use as reference evaluation')
 parser.add_argument('--basis', metavar='basis', type=str, nargs = '?', default='6-311++G(3df,2pd)', help='basis to use. default 6-311++G(3df,2pd)')
-parser.add_argument('--datapath', action='store', type=str, help='Location of precomputed matrices (run prep_data first)')
-parser.add_argument('--refpath', action='store', type=str, help='Location of reference trajectories/DMs')
-parser.add_argument('--reftraj', action='store', type=str, default="results.traj", help='File of reference trajectories')
+parser.add_argument('--trajpath', action='store', type=str, default="results.traj", help='File of reference trajectories')
 parser.add_argument('--modelpath', metavar='modelpath', type=str, default='', help='Net Checkpoint location to use evaluating. Must be a directory containing "xc" network or "scf" network. Directory path must contain LDA, GGA, or MGGA.')
 parser.add_argument('--writepath', action='store', default='.', help='where to write eval results')
-parser.add_argument('--writeeach', action='store', default='preds', help='where to write results individually')
-parser.add_argument('--writeref', action='store_true', default=False, help='write reference dictionaries')
-parser.add_argument('--writepred', action='store_true', default=False, help='write prediction dictionaries')
-parser.add_argument('--keeprho', action='store_true', default=False, help='whether to keep rho in matrix')
 parser.add_argument('--startidx', action='store', default=0, type=int, help='Index in reference traj to start on.')
 parser.add_argument('--endidx', action='store', default=-1, type=int, help='Index in reference traj to end on.')
 parser.add_argument('--skipidcs', nargs='*', type=int, help="Indices to skip during evaluation. Space separated list of ints")
 parser.add_argument('--skipforms', nargs='*', type=str, help='Formulas to skip during evaluation')
-parser.add_argument('--memwatch', action='store_true', default=False, help='UNIMPLEMENTED YET')
-parser.add_argument('--nowrapscf', action='store_true', default=False, help="Whether to wrap SCF calc in exception catcher")
 parser.add_argument('--evtohart', action='store_true', default=False, help='If flagged, assumes read reference energies in eV and converts to Hartree')
 parser.add_argument('--gridlevel', action='store', type=int, default=5, help='grid level')
 parser.add_argument('--maxcycle', action='store', type=int, default=50, help='limit to scf cycles')
 parser.add_argument('--atomization', action='store_true', default=False, help="If flagged, does atomization energies as well as total energies.")
 parser.add_argument('--atmflip', action='store_true', default=False, help="If flagged, does reverses reference atomization energies sign")
-parser.add_argument('--rho', action='store_true', default=False, help='If flagged, calculate rho loss')
 parser.add_argument('--forceUKS', action='store_true', default=False, help='If flagged, force pyscf method to be UKS.')
 parser.add_argument('--testgen', action='store_true', default=False, help='If flagged, only loops over trajectory to generate mols')
-parser.add_argument('--noloss', action='store_true', default=False, help='If flagged, does not calculate losses with regards to reference trajectories, only predicts and saves prediction files.')
 args = parser.parse_args()
 
 scale = 1
@@ -157,7 +147,7 @@ if __name__ == '__main__':
         
         try:
             print('Symlinking {} to {}'.format(args.modelpath, os.path.join(xcp, 'xc')))
-            os.symlink(args.modelpath, os.path.join(xcp, 'xc'))
+            os.symlink(os.path.abspath(args.modelpath), os.path.join(xcp, 'xc'))
         except:
             print('Symlink failed. Another model might be symlinked already.')
             pass
@@ -166,22 +156,16 @@ if __name__ == '__main__':
     with open('unconv','w') as ucfile:
         ucfile.write('#idx\tatoms.symbols\txc_fail\txc_fail_en\txc_bckp\txc_bckp_en\n')
 
-    if args.writeeach:
-        try:
-            os.mkdir(os.path.join(args.writepath, args.writeeach))
-        except:
-            pass
+    try:
+        os.mkdir(os.path.join(args.writepath, 'preds'))
+    except:
+        pass
     
-    atomsp = os.path.join(args.refpath, args.reftraj)
-    print("READING TESTING TRAJECTORY: {}".format(atomsp))
-    atoms = read(atomsp, ':')
+    print("READING TESTING TRAJECTORY: {}".format(args.trajpath))
+    atoms = read(args.trajpath, ':')
     indices = np.arange(len(atoms)).tolist()
     
     if args.atomization:
-        #try to read previous calc
-        #temp fix, negative sign because that's what the training assumes
-        #or if already flipped, don't flip
-
         if args.forceUKS:
             ipol = True
             KS = UKS
@@ -189,10 +173,12 @@ if __name__ == '__main__':
             ipol = False
             KS = RKS
 
+        #try to read previous calc
         try:
             with open('atomicen.pkl', 'rb') as f:
                 atomic_e = pickle.load(f)
             atomic_end = time()
+        #if not found, generate the data
         except:
             print("ATOMIZATION ENERGY FLAGGED -- CALCULATING SINGLE ATOM ENERGIES")
             atomic_set = []
@@ -304,33 +290,29 @@ if __name__ == '__main__':
             continue
         if idx > endidx:
             continue
-
+        #try reading saved results
         try:
-            wep = os.path.join(args.writepath, args.writeeach)
-            if args.writepred:
-                print("Attempting read in of previous results.\n{}".format(formula))
-                predep = os.path.join(wep, '{}_{}.pckl'.format(idx, symbols))
-                with open(predep, 'rb') as file:
-                    results = pickle.load(file)
-                e_pred = results['E']
-                dm_pred = results['dm']
-                pred_e[idx] = [formula, e_pred]
-                pred_dm[idx] = [formula, dm_pred]
-                ao_evals[idx] = results['ao_eval']
-                mo_occs[idx] = results['mo_occ']
-                #mfs[idx] = results['mf']
-                nelecs[idx] = results['nelec']
-                gweights[idx] = results['gweights']
+            wep = os.path.join(args.writepath, 'preds')
+            print("Attempting read in of previous results.\n{}".format(formula))
+            predep = os.path.join(wep, '{}_{}.pckl'.format(idx, symbols))
+            with open(predep, 'rb') as file:
+                results = pickle.load(file)
+            e_pred = results['E']
+            dm_pred = results['dm']
+            pred_e[idx] = [formula, e_pred]
+            pred_dm[idx] = [formula, dm_pred]
+            ao_evals[idx] = results['ao_eval']
+            mo_occs[idx] = results['mo_occ']
+            #mfs[idx] = results['mf']
+            nelecs[idx] = results['nelec']
+            gweights[idx] = results['gweights']
 
 
-                print("Results found for {} {}".format(idx, symbols))
-            else:
-                raise ValueError
+            print("Results found for {} {}".format(idx, symbols))
         except FileNotFoundError:
             print("No previous results found. Generating new data.")
             results = {}
             #manually skip for preservation of reference file lookups
-
             print("================= {}:    {} ======================".format(idx, formula))
             print("Getting Datapoint")
             if (formula in skipforms) or (idx in skipidcs):
@@ -393,10 +375,7 @@ if __name__ == '__main__':
             ao_eval = mf._numint.eval_ao(mol, mf.grids.coords)
             e_pred = mf.e_tot
             dm_pred = mf.make_rdm1()
-            rho_pred = dm_to_rho(dm_pred, ao_eval)
             pred_e[idx] = [formula, symbols, e_pred]
-            pred_dm[idx] = [formula, symbols, dm_pred]
-            ao_evals[idx] = ao_eval
 
             print("++++++++++++++++++++++++")
             print("Molecular Energy: {}/{} -- {}".format(formula, symbols, mf.e_tot))
@@ -411,17 +390,6 @@ if __name__ == '__main__':
             results['E'] = e_pred
             np.save(os.path.join(wep, '{}_{}.dm.npy'.format(idx, symbols)), dm_pred)
 
-        rho_pred = dm_to_rho(pred_dm[idx][2], ao_evals[idx])
-
-        if args.writeeach:
-            #must omit density matrix and ao_eval, can't pickle something larger than 4GB
-            #dm saved separately anyway.
-            writeres = {k:results[k] for k in results.keys() if k not in ['dm', 'ao_eval', 'gweights']}
-            wep = os.path.join(args.writepath, args.writeeach)
-            if args.writepred:
-                predep = os.path.join(wep, '{}_{}.pckl'.format(idx, symbols))
-                with open(predep, 'wb') as file:
-                    file.write(pickle.dumps(writeres))
     write(os.path.join(wep, 'predictions.traj'), atoms)
 
     molecule_end = time() - molecule_start
@@ -446,6 +414,3 @@ if __name__ == '__main__':
         with open(args.writepath+'/fails.txt', 'w') as failfile:
             for idx, failed in fails.enumerate():
                 failfile.write("{} {}\n".format(idx, failed))
-    if args.writepred and not args.writeeach:
-        with open(args.writepath+'/pred_dct_{}.pckl'.format(args.xctype), 'wb') as file:
-            file.write(pickle.dumps(pred_dct))

@@ -3,4 +3,4 @@ numpy
 scipy
 ase
 opt_einsum
-pyscf
+pyscf<=2.0

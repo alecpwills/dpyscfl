@@ -285,6 +285,7 @@ if __name__ == '__main__':
         symbols = atom.symbols
         times_dct[idx] = [formula, symbols]
         times_dct[idx].append(this_mol_time_start)
+        wep = os.path.join(args.writepath, 'preds')
 
         if idx < args.startidx:
             continue
@@ -292,24 +293,17 @@ if __name__ == '__main__':
             continue
         #try reading saved results
         try:
-            wep = os.path.join(args.writepath, 'preds')
             print("Attempting read in of previous results.\n{}".format(formula))
-            predep = os.path.join(wep, '{}_{}.pckl'.format(idx, symbols))
-            with open(predep, 'rb') as file:
-                results = pickle.load(file)
-            e_pred = results['E']
-            dm_pred = results['dm']
-            pred_e[idx] = [formula, e_pred]
-            pred_dm[idx] = [formula, dm_pred]
-            ao_evals[idx] = results['ao_eval']
-            mo_occs[idx] = results['mo_occ']
-            #mfs[idx] = results['mf']
-            nelecs[idx] = results['nelec']
-            gweights[idx] = results['gweights']
+            predep = os.path.join(wep, '{}_{}.traj'.format(idx, symbols))
+            atom = read(predep, ':')[0]
+            e_pred = atom.info['e_pred']
+            dmp = os.path.join(wep, '{}_{}.dm.npy'.format(idx, symbols))
+            dm_pred = np.load(dmp)
 
 
             print("Results found for {} {}".format(idx, symbols))
-        except FileNotFoundError:
+            print(atom)
+        except:
             print("No previous results found. Generating new data.")
             results = {}
             #manually skip for preservation of reference file lookups

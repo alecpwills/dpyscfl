@@ -1,6 +1,8 @@
 # dpyscfl
-
+dpyscfl(ite)
 ## Dependencies
+
+dpyscfl depends on PyTorch for learning and evaluating machine learned functionals. Evaluation of trained functionals is possible through using [pylibnxc](https://github.com/semodi/libnxc).
 
 Libnxc depends on PyTorch. The C++/Fortran implementation requires that libtorch is made available at compile time, pylibnxc depends on pytorch.
 Both libraries are available for download on the [pytorch website](https://pytorch.org/get-started/locally/).

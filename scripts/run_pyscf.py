@@ -215,7 +215,7 @@ def do_ccsdt(idx,atoms,basis, **kwargs):
         mycc = cc.CCSD(mf)
         try:
             mycc.kernel()
-        except AssertionError:
+        except:
             print("CCSD Failed. Stopping at HF")
             result.calc = SinglePointCalculator(result)
             ehf = (mf.e_tot) 
@@ -235,7 +235,7 @@ def do_ccsdt(idx,atoms,basis, **kwargs):
         print("Running CCSD(T) calculation from CCSD")
         try:
             ccsdt = mycc.ccsd_t()
-        except ZeroDivisionError:
+        except:
             print("CCSD(T) Failed. DIV/0. Stopping at CCSD")
             result.calc = SinglePointCalculator(result)
             ehf = (mf.e_tot) 

@@ -2,6 +2,7 @@ from ase.calculators.singlepoint import SinglePointCalculator
 from ase.units import Hartree
 import pyscf
 from ase.io import read, write
+from time import time
 from pyscf import dft
 import numpy as np
 from pyscf import gto, scf, cc
@@ -210,12 +211,20 @@ def do_ccsdt(idx,atoms,basis, **kwargs):
             print("Restart Flagged -- Setting mf.init_guess to chkfile")
             mf.init_guess = '{}_{}.chkpt'.format(idx, atoms.symbols)
         print("Running HF calculation")
+        hf_start = time()
         mf.run()
+        hf_time = time() - hf_start
         print("Running CCSD calculation from HF")
+        with open('timing', 'a') as tfile:
+            tfile.write('{}\t{}\t{}\t{}\n'.format(idx, atoms.symbols, 'HF', hf_time))
         mycc = cc.CCSD(mf)
         try:
+            ccsd_start = time()
             mycc.kernel()
-        except:
+            ccsd_time = time() - ccsd_start
+            with open('timing', 'a') as tfile:
+                tfile.write('{}\t{}\t{}\t{}\n'.format(idx, atoms.symbols, 'CCSD', ccsd_time))
+        except AssertionError:
             print("CCSD Failed. Stopping at HF")
             result.calc = SinglePointCalculator(result)
             ehf = (mf.e_tot) 
@@ -227,15 +236,20 @@ def do_ccsdt(idx,atoms,basis, **kwargs):
                                     'e_ccsd': None,
                                     'e_ccsdt':None}
             with open('progress','a') as progfile:
-                progfile.write('{} \t {} \t {} \t {} \t {} \t {} \n'.format(idx, atoms.symbols, etot, ehf, eccsd, eccsdt))
+                progfile.write('{}\t{}\t{}\t{}\t{}\t{}\n'.format(idx, atoms.symbols, etot, ehf, eccsd, eccsdt))
             write_mycc(idx, atoms, mf, result)
             return result
 
         print('MO Occ shape: ', mycc.mo_occ.shape)
         print("Running CCSD(T) calculation from CCSD")
         try:
+            ccsdt_start = time()
             ccsdt = mycc.ccsd_t()
-        except:
+            ccsdt_time = time() - ccsdt_start
+            with open('timing', 'a') as tfile:
+                tfile.write('{}\t{}\t{}\t{}\n'.format(idx, atoms.symbols, 'CCSD(T)', ccsdt_time))
+
+        except ZeroDivisionError:
             print("CCSD(T) Failed. DIV/0. Stopping at CCSD")
             result.calc = SinglePointCalculator(result)
             ehf = (mf.e_tot) 
@@ -247,7 +261,7 @@ def do_ccsdt(idx,atoms,basis, **kwargs):
                                     'e_ccsd': eccsd,
                                     'e_ccsdt':eccsdt}
             with open('progress','a') as progfile:
-                progfile.write('{} \t {} \t {} \t {} \t {} \t {} \n'.format(idx, atoms.symbols, etot, ehf, eccsd, eccsdt))
+                progfile.write('{}\t{}\t{}\t{}\t{}\t{}\n'.format(idx, atoms.symbols, etot, ehf, eccsd, eccsdt))
             write_mycc(idx, atoms, mycc, result)
             return result
 
@@ -261,7 +275,9 @@ def do_ccsdt(idx,atoms,basis, **kwargs):
                                 'e_ccsd': eccsd,
                                 'e_ccsdt': eccsdt}
         with open('progress','a') as progfile:
-            progfile.write('{} \t {} \t {} \t {} \t {} \t {} \n'.format(idx, atoms.symbols, etot, ehf, eccsd, eccsdt))
+            progfile.write('{}\t{}\t{}\t{}\t{}\t{}\n'.format(idx, atoms.symbols, etot, ehf, eccsd, eccsdt))
+        with open('timing', 'a') as tfile:
+            tfile.write('{}\t{}\t{}\t{}\n'.format(idx, atoms.symbols, 'TOTAL(HF->END)', time() - hf_start))
 
         write_mycc(idx, atoms, mycc, result)
 
@@ -302,6 +318,7 @@ def do_ccsdt(idx,atoms,basis, **kwargs):
         #    print('Using density fitting')
         #    mf = dft.RKS(mol).density_fit()
         mf.xc = '{},{}'.format(kwargs['XC'].lower(), kwargs['XC'].lower())
+        xc_start = time()
         mf.kernel()
         if not mf.converged:
             print("Calculation did not converge. Trying second order convergence with PBE to feed into calculation.")
@@ -312,14 +329,16 @@ def do_ccsdt(idx,atoms,basis, **kwargs):
             if not mf.converged:
                 print("Convergence still failed -- {}".format(atoms.symbols))
                 with open('unconv', 'a') as f:
-                    f.write('{} \t {} \t {} \n'.format(idx, atoms.symbols, mf.e_tot))
-
+                    f.write('{}\t{}\t{}\n'.format(idx, atoms.symbols, mf.e_tot))
+        xc_time = time() - xc_start
+        with open('timing', 'a') as tfile:
+            tfile.write('{}\t{}\t{}\t{}\n'.format(idx, atoms.symbols, mf.xc.upper(), xc_time))
         if kwargs['df'] == True:
             print('Default auxbasis', mf.with_df.auxmol.basis)
         result.calc = SinglePointCalculator(result)
         result.calc.results = {'energy':mf.e_tot }
         with open('progress','a') as progfile:
-            progfile.write('{} \t {} \t {} \n'.format(idx, atoms.symbols, mf.e_tot ))
+            progfile.write('{}\t{}\t{}\n'.format(idx, atoms.symbols, mf.e_tot ))
         #np.savetxt('{}.m_occ'.format(idx), mf.mo_occ, delimiter=' ')
         #np.savetxt('{}.mo_coeff'.format(idx), mf.mo_coeff, delimiter=' ')
         write_mycc(idx, atoms, mf, result)
@@ -380,10 +399,13 @@ if __name__ == '__main__':
     if not args.rerun:
         print('beginning new progress file')
         with open('progress','w') as progfile:
-            progfile.write('#idx \t atoms.symbols \t etot  (Har) \t ehf  (Har) \t eccsd  (Har) \t eccsdt  (Har) \n')
+            progfile.write('#idx\tatoms.symbols\tetot  (Har)\tehf  (Har)\teccsd  (Har)\teccsdt  (Har)\n')
         print('beginning new nonconverged file')
         with open('unconv','w') as ucfile:
-            ucfile.write('#idx \t atoms.symbols \t etot  (Har) \t ehf  (Har) \t eccsd  (Har) \t eccsdt  (Har) \n')
+            ucfile.write('#idx\tatoms.symbols\tetot  (Har)\tehf  (Har)\teccsd  (Har)\teccsdt  (Har)\n')
+        print('beginning new timing file')
+        with open('timing','w') as tfile:
+            tfile.write('#idx\tatoms.symbols\tcalc\ttime (s)\n')
     if not args.serial:
         results = calculate_distributed(atoms, args.nworkers, args.basis,
                                         margin=args.cmargin,

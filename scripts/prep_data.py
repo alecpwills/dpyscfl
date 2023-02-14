@@ -21,6 +21,7 @@ parser.add_argument('-r', '--ref_path', action='store', default='', help='Locati
 parser.add_argument('--sequential', action="store_true", help='Whether to get_datapoint individually or use list then write')
 parser.add_argument('--forcepol', action="store_true", default=False, help='If flagged, all calculations spin polarized. Otherwise, spin determines.')
 parser.add_argument('--dfit', action='store_true', default=False, help='Generate density fitting matrices or not')
+parser.add_argument('--fcenter', action='store_true', default=False, help='flags do_fcenter as true if specified.')
 parser.add_argument('--mingridlevel', action='store', type=int, default=3, help='Minimum grid level to use in generation of matrices. Defaults to 3, as paper suggests. If atom has larger specified grid_level, larger is used')
 parser.add_argument('--zsymfalse', action='store_false', default=True, help='If flagged, forces no zsym for basis')
 args = parser.parse_args()
@@ -58,7 +59,7 @@ if __name__ == '__main__':
                                 xc=func, zsym=d.info.get('sym',args.zsymfalse),
                                 n_rad=d.info.get('n_rad',30), n_ang=d.info.get('n_ang',15),
                                 init_guess=False, spin = d.info.get('spin',None),
-                                pol=pol, do_fcenter=True,
+                                pol=pol, do_fcenter=args.fcenter,
                                 ref_path=args.ref_path, ref_index= idx, ref_traj=reftraj,
                                 ref_basis='6-311++G(3df,2pd)', dfit=args.dfit) for idx, d in zip(indices, atoms)]
 

@@ -131,8 +131,12 @@ if __name__ == '__main__':
         ptd = func(xctype=args.pretrainedtype, pretrain_loc=args.pretrainedpath)
         dct[args.pretrainlab] = ptd.xc
     if args.modelpath:
-        xc = func(xctype=args.modeltype, path=args.modelpath)
-        dct[args.plotlabel] = xc.xc
+        try:
+            #xc = func(xctype=args.modeltype, path=args.modelpath)
+            xc = torch.jit.load(args.modelpath)
+        except:
+            xc = torch.load(args.modelpath)
+            dct[args.plotlabel] = xc.xc
     plot_fxc(dct, s_range=[0, 3], rs=[1], alpha_range=[0], savename=args.savepref+'_alpha0.pdf')
     plot_fxc(dct, s_range=[0, 3], rs=[1], alpha_range=[1], savename=args.savepref+'_alpha1.pdf')
     plot_fxc(dct, s_range=[0, 3], rs=[1], alpha_range=[10], savename=args.savepref+'_alpha10.pdf')

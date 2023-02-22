@@ -97,6 +97,7 @@ def get_datapoint(mol, mf, dfit = True, init_guess=False, do_fcenter=True):
     print("DATAPOINT MO_ENERGY: ", mf.mo_energy)
     print("DATAPOINT E_IP: ", e_ip)
     print("DATAPOINT MO_OCC: ", mf.mo_occ)
+    print("DATAPOINT MO_COEFF: ", mf.mo_coeff)
     if len(e_ip) == 2 and len(mf.mo_occ) == 2:
         e_ip = e_ip[0]
         ip_idx = np.where(np.diff(mf.mo_occ).astype(bool))[1][0]
@@ -118,6 +119,7 @@ def get_datapoint(mol, mf, dfit = True, init_guess=False, do_fcenter=True):
                 'e_nuc': np.array(mf.energy_nuc()),
                 'mo_energy': np.array(mf.mo_energy),
                 'mo_occ': np.array(mf.mo_occ),
+                'mo_coeff': np.array(mf.mo_coeff),
                 'e_ip':e_ip,
                 'ip_idx':ip_idx,
                 'e_pretrained': e_base,
@@ -289,9 +291,12 @@ def gen_mf_mol(mol, xc='', pol=False, grid_level = None, nxc = False):
 
     if xc:
         print("Building grids...")
+        print("Grid level = {}".format(grid_level))
         mf.xc = xc
         mf.grids.level = grid_level if grid_level else 5
         mf.grids.build()
+        print("Grid coordinate shape: {}".format(mf.grids.coords.shape))
+
     else:
         mf.xc = ''
     print("METHOD GENERATED: {}".format(method))
@@ -440,7 +445,7 @@ def get_rho(mf, mol, dm, grids):
 
 
 def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
-                  nl_cutoff=0, grid_deriv=1, init_guess = False, ml_basis='',
+                  nl_cutoff=0, grid_deriv=2, init_guess = False, ml_basis='',
                   do_fcenter=True, zsym = False, n_rad=20,n_ang=10, spin=None, pol=False,
                   ref_basis='', ref_path = '', ref_traj='', ref_index=0, dfit=True):
     """_summary_
@@ -605,6 +610,7 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
 
     if grid_level:
         print("GRID GENERATION.")
+        print("GRID INFO: mf.grids.coords.shape = ", mf.grids.coords.shape)
         print("STATS: GRID_LEVEL={}. ZYM={}. NL_CUTOFF={}. SPIN(INP/MOL)={}/{}. POL={}.".format(grid_level, zsym, nl_cutoff, spin, mol.spin, pol))
         if zsym and not nl_cutoff:
             #outdated, skip this by prior zsym = False
@@ -629,11 +635,11 @@ def old_get_datapoint(atoms, xc='', basis='6-311G*', ncore=0, grid_level=0,
             print("Generating non-polarized density.")
             rho = get_rho(mf, mol_ref, dm_init, mf.grids)
 
-        #ao-eval, grid weights handled in get_datapoint
-        #features.update({'rho': rho,
-        #                 'ao_eval':mf._numint.eval_ao(mol, mf.grids.coords, deriv=grid_deriv),
-        #                 'grid_weights':mf.grids.weights})
-        features.update({'rho':rho})
+        # ao-eval, grid weights handled in get_datapoint
+        features.update({'rho': rho,
+                        'ao_eval':mf._numint.eval_ao(mol, mf.grids.coords, deriv=grid_deriv),
+                        'grid_weights':mf.grids.weights})
+        # features.update({'rho':rho})
 
     print('PRE-UPDATED MATRICES E_BASE, FEATURES')
     print(matrices['e_base'])

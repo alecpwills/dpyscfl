@@ -267,6 +267,11 @@ class SCF(torch.nn.Module):
             dm = alpha * dm + beta * dm_old
 
             dm_old = dm
+            if vvv:
+                print("Density Matrix stats: ")
+                print("Mean: ", torch.mean(dm))
+                print("Min/Max: ", torch.min(dm), torch.max(dm))
+                print("Select Indices: dm.flatten()[[0, 5, 10, 100]]", dm.flatten()[[0,5,10,100]])
 
             hc = get_hcore(v,t)
             if df_3c is not None:

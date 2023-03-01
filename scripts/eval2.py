@@ -19,7 +19,7 @@ process = psutil.Process(os.getpid())
 DEVICE = 'cpu'
 
 parser = argparse.ArgumentParser(description='Evaluate xc functional')
-parser.add_argument('--pretrain_loc', action='store', type=str, help='Location of pretrained models (should be directory containing x and c)')
+parser.add_argument('--pretrain_loc', action='store', type=str, default='', help='Location of pretrained models (should be directory containing x and c)')
 parser.add_argument('--type', action='store', choices=['GGA','MGGA'])
 parser.add_argument('--xc', action="store", default='', type=str, help='XC to use as reference evaluation')
 parser.add_argument('--basis', metavar='basis', type=str, nargs = '?', default='6-311++G(3df,2pd)', help='basis to use. default 6-311++G(3df,2pd)')
@@ -37,7 +37,11 @@ parser.add_argument('--atomization', action='store_true', default=False, help="I
 parser.add_argument('--atmflip', action='store_true', default=False, help="If flagged, does reverses reference atomization energies sign")
 parser.add_argument('--forceUKS', action='store_true', default=False, help='If flagged, force pyscf method to be UKS.')
 parser.add_argument('--testgen', action='store_true', default=False, help='If flagged, only loops over trajectory to generate mols')
+parser.add_argument('--hyb_par', action='store', default=0, help='hybrid mixing parameter')
 args = parser.parse_args()
+
+if (args.pretrain_loc and args.modelpath):
+    raise ValueError("You can't specify both a pretrained network and a modelpath.")
 
 scale = 1
 if args.evtohart:
@@ -135,9 +139,15 @@ if __name__ == '__main__':
     start = time()
     times_dct = {'start':start}
     #Pylibnxc uses (M)GGA_XC_CUSTOM flag to look for custom model in current working directory, so if modelpath is flagged, create the directory and symlink
-    if args.modelpath:
+    if (args.modelpath or args.pretrain_loc):
         modtype = args.type.upper()
         xcp = '{}_XC_CUSTOM'.format(modtype)
+        path = args.modelpath if args.modelpath else args.pretrain_loc
+        #entry point -- if pretrained network, load in and save in custom folder
+        if args.pretrain_loc:
+            scf = get_scf(args.type, pretrain_loc=args.pretrain_loc, hyb_par=args.hyb_par)
+            torch.save(scf, os.path.join(args.pretrain_loc, 'xc'))
+            path = os.path.join(path, 'xc')
         try:
             print('Attempting directory creation...')
             os.mkdir(xcp)
@@ -146,8 +156,8 @@ if __name__ == '__main__':
             pass
         
         try:
-            print('Symlinking {} to {}'.format(args.modelpath, os.path.join(xcp, 'xc')))
-            os.symlink(os.path.abspath(args.modelpath), os.path.join(xcp, 'xc'))
+            print('Symlinking {} to {}'.format(path, os.path.join(xcp, 'xc')))
+            os.symlink(os.path.abspath(path), os.path.join(xcp, 'xc'))
         except:
             print('Symlink failed. Another model might be symlinked already.')
             pass
@@ -383,7 +393,7 @@ if __name__ == '__main__':
 
             results['E'] = e_pred
             np.save(os.path.join(wep, '{}_{}.dm.npy'.format(idx, symbols)), dm_pred)
-
+            
     write(os.path.join(wep, 'predictions.traj'), atoms)
 
     molecule_end = time() - molecule_start

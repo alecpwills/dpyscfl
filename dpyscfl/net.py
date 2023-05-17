@@ -137,7 +137,6 @@ class XC(torch.nn.Module):
         uniform_factor = (3/10)*(3*np.pi**2)**(2/3)
         tw = gamma/(8*(rho+self.epsilon))
         #commented is dpyscflite version, uncommented is xcdiff version
-        #shouldn't change anything, but
         #return torch.nn.functional.relu((tau - tw)/(uniform_factor*rho**(5/3)+tw*1e-3 + 1e-12))
         return (tau - gamma/(8*(rho+self.epsilon)))/(uniform_factor*rho**(5/3)+self.epsilon)
 

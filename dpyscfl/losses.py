@@ -247,8 +247,8 @@ def ae_loss(ref_dict,pred_dict, loss, **kwargs):
 def atomization_energies(energies):
     """Calculates atomization energies based on a dictionary of molecule/atomic energies.
     
-    energies['ABCD'] = molecular energy
-    energies['A'], energies['B'], etc. = atomic energy.
+    energies['ABCD'] = product energy
+    energies['A'], energies['B'], etc. = reactant energy.
     
     Loops over ABCD - A - B - C - D
 

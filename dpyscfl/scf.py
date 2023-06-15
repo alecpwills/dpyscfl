@@ -293,7 +293,8 @@ class SCF(torch.nn.Module):
                     dm_old[1] = dm[0]*1e-12
 
                 exc = self.xc(dm)
-                vxc = torch.autograd.functional.jacobian(self.xc, dm, create_graph=True)
+                # vxc = torch.autograd.functional.jacobian(self.xc, dm, create_graph=True)
+                vxc = torch.autograd.functional.jacobian(self.xc, dm, create_graph=False)
                 # Restore correct symmetry for vxc
                 if vxc.dim() > 2:
                     vxc = contract('ij,xjk,kl->xil',L,vxc,L.T)

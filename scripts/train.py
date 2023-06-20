@@ -3,18 +3,23 @@
 #meant for use on local machine for ease of changes without git pulls/commits
 from unittest import skip
 import torch
-torch.autograd.set_detect_anomaly(True)
+# torch.autograd.set_detect_anomaly(True)
+from pylibnxc.pyscf import RKS, UKS
+import tempfile
+from pyscf import dft as PSDFT
 import numpy as np
 from ase.io import read
 from dpyscfl.net import *
 from dpyscfl.scf import *
 from dpyscfl.utils import *
 from dpyscfl.losses import *
+import matplotlib.pyplot as plt
 from functools import partial
 from ase.units import Bohr
 from datetime import datetime
-import pylibnxc
 import os, psutil, tarfile, argparse, json, shutil
+from itertools import cycle
+
 import tqdm, inspect
 #from eval import KS, eval_xc, eval_wrap
 old_print = print
@@ -40,8 +45,8 @@ parser.add_argument('--datapath', action='store', type=str, help='Location of pr
 parser.add_argument('--reftraj', action='store', type=str, help='Location of reference trajectories')
 parser.add_argument('--n_hidden', metavar='n_hidden', type=int, default=16, help='Number of hidden nodes (16)')
 parser.add_argument('--hyb_par', metavar='hyb_par', type=float, default=0.0, help='Hybrid mixing parameter (0.0)')
-parser.add_argument('--E_weight', metavar='e_weight', type=float, default=0.01, help='Weight of total energy term in loss function (0.01)')
-parser.add_argument('--rho_weight', metavar='rho_weight', type=float, default=20, help='Weight of density term in loss function (20)')
+parser.add_argument('--E_weight', metavar='e_weight', type=float, default=0.01, help='Weight of total energy term in loss function (0)')
+parser.add_argument('--rho_weight', metavar='rho_weight', type=float, default=20, help='Weight of density term in loss function (25)')
 parser.add_argument('--ae_weight', metavar='ae_weight', type=float, default=1, help='Weight of AE term in loss function (1)')
 parser.add_argument('--modelpath', metavar='modelpath', type=str, default='', help='Net Checkpoint location to continue training')
 parser.add_argument('--optimpath', metavar='optimpath', type=str, default='', help='Optimizer Checkpoint location to continue training')
@@ -68,18 +73,21 @@ parser.add_argument('--loadfa', type=int, action='store', default=0, help='If lo
 parser.add_argument('--outputlayergrad', action='store_true', default=False, help='Only works with freezeappend. If flagged, sets the output layer to also be differentiable.')
 parser.add_argument('--checkgrad', action='store_true', default=False, help='If flagged, executes loop over scf.xc parameters to print gradients')
 parser.add_argument('--testmol', type=str, action='store', default='', help='If specified, give symbols/formula/test label for debugging purpose')
-parser.add_argument('--torchtype', type=str, default='float', help='float or double')
+parser.add_argument('--torchtype', type=str, default='double', help='float or double')
 parser.add_argument('--testall', action='store_true', default=False, help='If flagged, forces testing of entire training set.')
 parser.add_argument('--targetdir', action='store', type=str, default='', help='Directory in which to store checkpoint files during training.')
 parser.add_argument('--valtraj', type=str, action='store', default='', help="Path to validation trajectory. Validation won't occur without specifying this.")
+parser.add_argument('--valrefp', type=str, action='store', default='', help="Path to validation trajectory. Validation won't occur without specifying this.")
+parser.add_argument('--valreft', type=str, action='store', default='', help="Path to validation trajectory. Validation won't occur without specifying this.")
 parser.add_argument('--valbasis', metavar='basis', type=str, nargs = '?', default='6-311++G(3df,2pd)', help='validation basis to use. default 6-311++G(3df,2pd)')
-parser.add_argument('--valpol', action='store_true', default=True, help='If flagged, force pyscf method to be UKS for validation.')
+parser.add_argument('--valpol', action='store_true', default=False, help='If flagged, force pyscf method to be UKS for validation.')
 parser.add_argument('--valgridlevel', action='store', type=int, default=5, help='grid level')
 parser.add_argument('--valmaxcycle', action='store', type=int, default=100, help='max cycle for validation')
 parser.add_argument('--noxcdiffpop', action='store_false', default=True, help='If flagged, does NOT pop the molecules that Sebastian popped from his training set.')
 parser.add_argument('--testpop', action='store_true', default=False, help='for testing purposes')
 parser.add_argument('--passthrough', action='store_true', default=False, help='If flagged, first passthrough of the training trajectory just generates losses and does not update the network until the next pass.')
 parser.add_argument('--subset', action='store_true', default=False, help='If flagged, will use a subset of the dataloader to loop over. Reduces overhead of reading useless files.')
+parser.add_argument('--enhplot', action='store_true', default=False, help='If flagged and targetdir is flagged, will plot enhancement factors as training progresses to targetdir/enh.')
 parser.add_argument('--chkptmax', action='store', default=999999999, type=int, help='If specified, will not continue training after this many checkpoints.')
 args = parser.parse_args()
 
@@ -91,6 +99,141 @@ HYBRID = (args.hyb_par > 0.0)
 
 
 torch.set_default_dtype(ttypes[args.torchtype])
+models_plot = {'PBE_LXC': "PBE",
+               "SCAN_LXC": "SCAN"}
+
+def symlink(target, link_name, overwrite=False):
+    '''
+    https://stackoverflow.com/questions/8299386/modifying-a-symlink-in-python
+    Create a symbolic link named link_name pointing to target.
+    If link_name exists then FileExistsError is raised, unless overwrite=True.
+    When trying to overwrite a directory, IsADirectoryError is raised.
+    '''
+
+    if not overwrite:
+        os.symlink(target, link_name)
+        return
+
+    # os.replace() may fail if files are on different filesystems
+    link_dir = os.path.dirname(link_name)
+
+    # Create link to target with temporary filename
+    while True:
+        temp_link_name = tempfile.mktemp(dir=link_dir)
+
+        # os.* functions mimic as closely as possible system functions
+        # The POSIX symlink() returns EEXIST if link_name already exists
+        # https://pubs.opengroup.org/onlinepubs/9699919799/functions/symlink.html
+        try:
+            os.symlink(target, temp_link_name)
+            break
+        except FileExistsError:
+            pass
+
+    # Replace link_name with temp_link_name
+    try:
+        # Pre-empt os.replace on a directory with a nicer message
+        if not os.path.islink(link_name) and os.path.isdir(link_name):
+            raise IsADirectoryError(f"Cannot symlink over existing directory: '{link_name}'")
+        os.replace(temp_link_name, link_name)
+    except:
+        if os.path.islink(temp_link_name):
+            os.remove(temp_link_name)
+        raise
+
+def plot_fxc(models, rs = [0.1, 1, 5], s_range=[0, 3], alpha_range=None,
+             only = None, figsize=(8,8), savedir=None, savename=None):
+    def get_gamma(rho, s):
+        return (s*2*(3*np.pi**2)**(1/3)*rho**(4/3))**2
+        
+    def get_tau(rho, gamma, alpha):
+        uniform_factor = (3/10)*(3*np.pi**2)**(2/3)
+        return (gamma/(8*rho))+(uniform_factor*rho**(5/3))*alpha
+
+    def unpol_input(rho, gamma, tau):
+        return .5*rho, .5*rho, 0.25*gamma, 0.25*gamma, 0.25*gamma, 0*tau, 0*tau, 0.5*tau, 0.5*tau
+
+    def libxc_input(rho, gamma, tau):
+        return rho, torch.sqrt(gamma/3),  torch.sqrt(gamma/3),  torch.sqrt(gamma/3), tau , tau
+    
+    f = plt.figure(figsize=figsize)
+    ax = f.add_subplot(111)
+    if only is not None:
+        saved_models = {}
+        for model_name in models:
+            gm = models[model_name].grid_models
+            saved_models[model_name] = gm
+            models[model_name].grid_models = gm[only:only+1]
+    if alpha_range is None:
+        alpha_range_= [1]
+    else:
+        alpha_range_= alpha_range
+    idx = 0
+    for  _, rs_val in enumerate(rs):
+        for alpha in alpha_range_:
+            rho_val = 3/(4*np.pi*rs_val**3)
+            s = torch.linspace(s_range[0], s_range[1],300)
+            rho = torch.Tensor([rho_val]*len(s))
+            gamma = get_gamma(rho, s)
+            tau = get_tau(rho, gamma, alpha)
+            
+            inp = torch.stack(unpol_input(rho, gamma, tau),dim=-1)
+            inp_libxc = torch.stack(libxc_input(rho, gamma,tau),dim=-1).detach().numpy().T
+        
+            lsc = cycle(['-','--',':','-.',':'])
+            lws = [2] + [1]*(len(models)-1)
+            e_heg = PSDFT.libxc.eval_xc("LDA_X",inp_libxc,spin=0, deriv=1)[0]
+            for model_name, lw in zip(models,lws):
+                ls = next(lsc)
+                if ls == '-' and len(rs) > 1: 
+                    l = '$r_s = ${}'.format(rs_val)
+                elif ls == '-' and len(alpha_range_) > 1:
+                    if alpha_range is not None:
+                        l = ' $\\alpha = $ {}'.format(alpha)
+                else:
+                    l = ''
+                libxc = False
+                if model_name[-4:] == '_LXC':
+                    libxc = True
+                if model_name[-2:] == '_S' or libxc:
+                    method = models[model_name]
+                else:
+                    #models[model_name].exx_a = torch.nn.Parameter(torch.Tensor([0]))
+                    try:
+                        method = models[model_name].eval_grid_models
+                    except:
+                        print('trying to access .xc.eval_grid_models')
+                        method = models[model_name].xc.eval_grid_models
+                if libxc:
+                    print('LibXC with {}'.format(method))
+                    exc = PSDFT.libxc.eval_xc(method, inp_libxc, spin=0, deriv=1)[0]
+                else:
+                    exc = method(inp).squeeze().detach().numpy()
+               
+               
+#                 e_heg = models[model_name].heg_model(rho).squeeze().detach().numpy()
+                ax.plot(s, exc/e_heg,
+                     label = l, color='C{}'.format(idx),ls = ls,lw=lw)
+
+                if len(rs) == 1 and (alpha_range is None or  len(alpha_range) == 1):
+                    idx+=1
+            idx+=1
+    lsc = cycle(['-','--',':','-.',':'])
+    for idx,model_name in enumerate(models):  
+        ls = next(lsc)
+        c = 'gray' if len(rs) > 1 or len(alpha_range_) > 1 else 'C{}'.format(idx)
+        ax.plot([],label=model_name,color=c,ls=ls)
+
+    ax.set_ylabel('$F_{xc}$ (a.u.)')
+    ax.set_xlabel('s')
+    ax.grid()
+    ax.legend()
+    
+    if only is not None:
+        for model_name in models:
+            models[model_name].grid_models = saved_models[model_name]
+    if savedir and savename:
+        plt.savefig(os.path.join(savedir, '{}_{}_'.format(str(rs), str(alpha_range))+savename), dpi=800)
 
 #spins for single atoms, since pyscf doesn't guess this correctly.
 spins_dict = {
@@ -129,84 +272,12 @@ def get_spin(at):
             spin = 0
     return spin
 
-def KS(mol, method, model_path='', nxc_kind='grid', **kwargs):
-    """ Wrapper for the pyscf RKS and UKS class
-    that uses a libnxc functionals
-    """
-    #hyb = kwargs.get('hyb', 0)
-    mf = method(mol, **kwargs)
-    if model_path != '':
-        if nxc_kind.lower() == 'atomic':
-            model = get_nxc_adapter('pyscf', model_path)
-            mf.get_veff = veff_mod_atomic(mf, model)
-        elif nxc_kind.lower() == 'grid':
-            parsed_xc = pylibnxc.pyscf.utils.parse_xc_code(model_path)
-            dft.libxc.define_xc_(mf._numint,
-                                 eval_xc,
-                                 pylibnxc.pyscf.utils.find_max_level(parsed_xc),
-                                 hyb=parsed_xc[0][0])
-            mf.xc = model_path
-        else:
-            raise ValueError(
-                "{} not a valid nxc_kind. Valid options are 'atomic' or 'grid'"
-                .format(nxc_kind))
-    return mf
-
-def eval_xc(xc_code, rho, spin=0, relativity=0, deriv=1, verbose=None):
-    """ Evaluation for grid-based models (not atomic)
-        See pyscf documentation of eval_xc
-    """
-    inp = {}
-    if spin == 0:
-        if rho.ndim == 1:
-            rho = rho.reshape(1, -1)
-        inp['rho'] = rho[0]
-        if len(rho) > 1:
-            dx, dy, dz = rho[1:4]
-            gamma = (dx**2 + dy**2 + dz**2)
-            inp['sigma'] = gamma
-        if len(rho) > 4:
-            inp['lapl'] = rho[4]
-            inp['tau'] = rho[5]
-    else:
-        rho_a, rho_b = rho
-        if rho_a.ndim == 1:
-            rho_a = rho_a.reshape(1, -1)
-            rho_b = rho_b.reshape(1, -1)
-        inp['rho'] = np.stack([rho_a[0], rho_b[0]])
-        if len(rho_a) > 1:
-            dxa, dya, dza = rho_a[1:4]
-            dxb, dyb, dzb = rho_b[1:4]
-            gamma_a = (dxa**2 + dya**2 + dza**2)  #compute contracted gradients
-            gamma_b = (dxb**2 + dyb**2 + dzb**2)
-            gamma_ab = (dxb * dxa + dyb * dya + dzb * dza)
-            inp['sigma'] = np.stack([gamma_a, gamma_ab, gamma_b])
-        if len(rho_a) > 4:
-            inp['lapl'] = np.stack([rho_a[4], rho_b[4]])
-            inp['tau'] = np.stack([rho_a[5], rho_b[5]])
-
-    parsed_xc = pylibnxc.pyscf.utils.parse_xc_code(xc_code)
-    total_output = {'v' + key: 0.0 for key in inp}
-    total_output['zk'] = 0
-    #print(parsed_xc)
-    for code, factor in parsed_xc[1]:
-        model = pylibnxc.LibNXCFunctional(xc_code, kind='grid')
-        output = model.compute(inp)
-        for key in output:
-            if output[key] is not None:
-                total_output[key] += output[key] * factor
-
-    exc, vlapl, vtau, vrho, vsigma = [total_output.get(key,None)\
-      for key in ['zk','vlapl','vtau','vrho','vsigma']]
-
-    vxc = (vrho, vsigma, vlapl, vtau)
-    fxc = None  # 2nd order functional derivative
-    kxc = None  # 3rd order functional derivative
-    return exc, vxc, fxc, kxc
-
-
-def get_singles(atoms, model, valbasis, valpol, valgridlevel, maxcycle):
+def get_singles(atoms, model, valbasis, valpol, valgridlevel, maxcycle, epoch, logpath=''):
     atomic_set = []
+    if valpol:
+        KS = UKS
+    else:
+        KS = RKS
     for at in atoms:
         atomic_set += at.get_chemical_symbols()
     atomic_set = list(set(atomic_set))
@@ -217,12 +288,14 @@ def get_singles(atoms, model, valbasis, valpol, valgridlevel, maxcycle):
     #generates pyscf mol, default basis 6-311++G(3df,2pd), charge=0, spin=None
     atomic_mol = [ase_atoms_to_mol(at, basis=valbasis, spin=get_spin(at), charge=0) for at in atomic]
     atomic_method = [gen_mf_mol(mol[1], xc='notnull', pol=valpol, grid_level=valgridlevel, nxc=True) for mol in atomic_mol]
+    xcp = 'MGGA_XC_CUSTOM'
     for idx, methodtup in enumerate(atomic_method):
         print(idx, methodtup)
         name, mol = atomic_mol[idx]
         method = methodtup[1]
-        mf = KS(mol, method, model_path=model)
-            
+        # mf = KS(mol, method, model_path=model)
+        mf = KS(mol, nxc=xcp, nxc_kind='grid')
+
         mf.grids.level = valgridlevel
         mf.max_cycle = maxcycle
         #mf.density_fit()
@@ -232,18 +305,28 @@ def get_singles(atoms, model, valbasis, valpol, valgridlevel, maxcycle):
         print("++++++++++++++++++++++++")
         print("Atomic Energy: {} -- {}".format(name, mf.e_tot))
         print("++++++++++++++++++++++++")
-    with open('atomicen.val.dat', 'w') as f:
-        f.write("#Atom \t Energy (Hartree) \n")
+    if epoch == 0:
+        ft = 'w'
+    else:
+        ft = 'a'
+    thislogpath = logpath+'_' if (logpath and logpath[-1] != '_') else logpath
+    with open(thislogpath+'val.atomicen.dat', ft) as f:
+        if epoch == 0:
+            f.write("#Epoch\tAtom\tEnergy (Hartree)\n")
         for k, v in atomic_e.items():
-            f.write('{} \t {} \n'.format(k, v))
-            print('{} \t {}'.format(k,v))
-    with open('atomicen.val.pkl', 'wb') as f:
+            f.write('{}\t{}\t{}\n'.format(epoch, k, v))
+            print('{}\t{}\t{}'.format(epoch, k, v))
+    with open(thislogpath+'val.atomicen.pkl', 'wb') as f:
         pickle.dump(atomic_e, f)
     return atomic_e
 
-def get_validation(atoms, model, valbasis, valpol, valgridlevel, maxcycle):
+def get_validation(atoms, model, valbasis, valpol, valgridlevel, maxcycle, epoch, logpath=''):
     energies = {at.get_chemical_formula():0 for at in atoms}
-
+    if valpol:
+        KS = UKS
+    else:
+        KS = RKS
+    xcp = 'MGGA_XC_CUSTOM'
     for idx, atom in enumerate(atoms):
         formula = atom.get_chemical_formula()
         symbols = atom.symbols
@@ -267,7 +350,8 @@ def get_validation(atoms, model, valbasis, valpol, valgridlevel, maxcycle):
                 if spin < 0:
                     raise ValueError
         _, method = gen_mf_mol(mol, xc='notnull', pol=valpol, grid_level=valgridlevel, nxc=True)
-        mf = KS(mol, method, model_path=model)
+        # mf = KS(mol, method, model_path=model)
+        mf = KS(mol, nxc=xcp, nxc_kind='grid')
         mf.grids.level = valgridlevel
         mf.grids.build()
         #mf.density_fit()
@@ -275,9 +359,174 @@ def get_validation(atoms, model, valbasis, valpol, valgridlevel, maxcycle):
         mf.kernel()
 
         energies[formula] = mf.e_tot
-
+        print("++++++++++++++++++++++++")
+        print("Validation Energy: {} -- {}".format(name, mf.e_tot))
+        print("++++++++++++++++++++++++")
+    if epoch == 0:
+        ft = 'w'
+    else:
+        ft = 'a'
+    thislogpath = logpath+'_' if (logpath and logpath[-1] != '_') else logpath
+    with open(thislogpath+'val.molen.dat', ft) as f:
+        if epoch == 0:
+            f.write("#Epoch\tAtom\tEnergy (Hartree)\n")
+        for k, v in energies.items():
+            f.write('{}\t{}\t{}\n'.format(epoch, k, v))
+            print('{}\t{}\t{}'.format(epoch, k, v))
+    with open(thislogpath+'val.molen.pkl', 'wb') as f:
+        pickle.dump(energies, f)
     return energies
 
+def get_singles_scf(atoms, model, valbasis, valpol, valgridlevel, maxcycle, epoch, valrefp, valreft, logpath='', valxc='PBE'):
+    '''
+    This function critically depends on including the individual atoms in the validation trajectory -- ref_index must be specified in the function,
+    so have your prep_data script run on the validation trajectory (molecules + individual atoms)
+    '''
+    print("GET_SINGLES_SCF, CALLED WITH: ", atoms)
+    atomic_set = []
+    for at in atoms:
+        atomic_set += at.get_chemical_symbols()
+    atomic_set = list(set(atomic_set))
+    for s in atomic_set:
+        assert s in list(spins_dict.keys()), "{}: Atom in dataset not present in spins dictionary.".format(s)
+    atomic_e = {s:0 for s in atomic_set}
+    atomic_inds = {s:0 for s in atomic_set}
+    for idx, at in enumerate(atoms):
+        print("IDX, ATOM: ", idx, at, at.get_chemical_formula())
+        if at.get_chemical_formula() in list(atomic_inds.keys()):
+            print("SINGLE ATOM FOUND IN VALIDATION TRAJECTORY -- ADDING INDEX TO LOOKUP DICTIONARY")
+            atomic_inds[at.get_chemical_formula()] = idx
+    print("GET_SINGLES_SCF: ATOMIC_INDICES DICTIONARY")
+    print(atomic_inds)
+    atomic = [Atoms(symbols=s) for s in atomic_set]
+    for idx, at in enumerate(atomic):
+        at.info['spin'] = get_spin(at)
+        name, mol = ase_atoms_to_mol(at, basis=valbasis, charge=0, spin=get_spin(at))
+        print(idx, at, mol)
+        mats = old_get_datapoint(at, basis=valbasis, grid_level= valgridlevel,
+                                xc=valxc, zsym=at.info.get('sym', False),
+                                n_rad=at.info.get('n_rad',30), n_ang=at.info.get('n_ang',15),
+                                init_guess=False, spin = get_spin(at),
+                                pol=valpol, do_fcenter=True,
+                                ref_path=valrefp, ref_index= atomic_inds[name], ref_traj=valreft,
+                                ref_basis='6-311++G(3df,2pd)', dfit=False)
+        e_base, eye, mats = mats
+        s_chol = np.linalg.inv(np.linalg.cholesky(mats['s']))
+        mats['s_chol'] = s_chol
+        mats['s_oh'] = s_chol
+        mats['s_inv_oh'] = s_chol.T
+        mats_l = {k: [mats[k]] for k in mats.keys()}
+        for k in mats_l.keys():
+            print(k)
+            ok = mats_l[k]
+            if type(ok[0]) in [int, float]:
+                print('integer/float from o3 dict')
+                mats_l[k] = [torch.Tensor(np.array(ok))]
+            elif not ok[0].shape:
+                mats_l[k] = [torch.Tensor(ok[0].reshape(1,))]
+            else:
+                mats_l[k] = [torch.Tensor(ok[0])]
+        valscf = get_scf(args.type, path=model)
+        # valscf.evaluate()
+        sc = True
+        vvv = True
+        freeze_net(valscf)
+        res = valscf([torch.Tensor(mats_l['dm_init'][0])], mats_l, sc=sc, verbose=vvv)
+        atomic_e[name] = res['E']
+        print("++++++++++++++++++++++++")
+        print("Atomic Energy: {} -- {}".format(name, res['E']))
+        print("++++++++++++++++++++++++")
+    if epoch == 0:
+        ft = 'w'
+    else:
+        ft = 'a'
+    thislogpath = logpath+'_' if (logpath and logpath[-1] != '_') else logpath
+    with open(thislogpath+'val.atomicen.dat', ft) as f:
+        if epoch == 0:
+            f.write("#Epoch\tAtom\tEnergy (Hartree)\n")
+        for k, v in atomic_e.items():
+            f.write('{}\t{}\t{}\n'.format(epoch, k, v[-1]))
+            print('{}\t{}\t{}'.format(epoch, k, v[-1]))
+    with open(thislogpath+'val.atomicen.pkl', 'wb') as f:
+        pickle.dump(atomic_e, f)
+    return atomic_e
+
+def get_validation_scf(atoms, model, valbasis, valpol, valgridlevel, maxcycle, epoch, valrefp, valreft, logpath='', valxc='PBE'):
+    energies = {at.get_chemical_formula():0 for at in atoms}
+    refs = {at.get_chemical_formula():at.info['atomization'] for at in atoms}
+    losses = {at.get_chemical_formula():0 for at in atoms}
+    for idx, atom in enumerate(atoms):
+        formula = atom.get_chemical_formula()
+        symbols = atom.symbols
+        results = {}
+
+        print("================= {}:    {} ======================".format(idx, formula))
+        print("Getting Validation Datapoint")
+        molgen = False
+        scount = 0
+        while not molgen:
+            try:
+                name, mol = ase_atoms_to_mol(atom, basis=valbasis, spin=get_spin(atom)-scount, charge=0)
+                molgen=True
+            except RuntimeError:
+                #spin disparity somehow, try with one less until 0
+                print("RuntimeError. Trying with reduced spin.")
+                spin = get_spin(atom)
+                spin = spin - scount - 1
+                scount += 1
+                if spin < 0:
+                    raise ValueError
+        
+        print(idx, atom, mol)
+        mats = old_get_datapoint(atom, basis=valbasis, grid_level= valgridlevel,
+                                xc=valxc, zsym=atom.info.get('sym', False),
+                                n_rad=atom.info.get('n_rad',30), n_ang=atom.info.get('n_ang',15),
+                                init_guess=False, spin = get_spin(atom),
+                                pol=valpol, do_fcenter=True,
+                                ref_path=valrefp, ref_index= idx, ref_traj=valreft,
+                                ref_basis='6-311++G(3df,2pd)', dfit=False)
+        e_base, eye, mats = mats
+        s_chol = np.linalg.inv(np.linalg.cholesky(mats['s']))
+        mats['s_chol'] = s_chol
+        mats['s_oh'] = s_chol
+        mats['s_inv_oh'] = s_chol.T
+        mats_l = {k: [mats[k]] for k in mats.keys()}
+        for k in mats_l.keys():
+            print(k)
+            ok = mats_l[k]
+            if type(ok[0]) in [int, float]:
+                print('integer/float from dict')
+                mats_l[k] = [torch.Tensor(np.array(ok))]
+            elif not ok[0].shape:
+                mats_l[k] = [torch.Tensor(ok[0].reshape(1,))]
+            else:
+                mats_l[k] = [torch.Tensor(ok[0])]
+
+        valscf = get_scf(args.type, path=model)
+        sc = True
+        vvv = True
+        freeze_net(valscf)
+        res = valscf([torch.Tensor(mats_l['dm_init'][0])], mats_l, sc=sc, verbose=vvv)
+ 
+
+        energies[formula] = res['E']
+        print("++++++++++++++++++++++++")
+        print("Validation Energy: {} -- {}".format(name, res['E']))
+        print("++++++++++++++++++++++++")
+    if epoch == 0:
+        ft = 'w'
+    else:
+        ft = 'a'
+    thislogpath = logpath+'_' if (logpath and logpath[-1] != '_') else logpath
+    with open(thislogpath+'val.molen.dat', ft) as f:
+        if epoch == 0:
+            f.write("#Epoch\tAtom\tPredicted Energy (Hartree)\n")
+        for k, v in energies.items():
+            f.write('{}\t{}\t{}\n'.format(epoch, k, v[-1]))
+            print('{}\t{}\t{}'.format(epoch, k, v))
+    with open(thislogpath+'val.molen.pkl', 'wb') as f:
+        pickle.dump(energies, f)
+    return energies
 
 
 def scf_wrap(scf, dm_in, matrices, sc, molecule=''):
@@ -560,6 +809,9 @@ if __name__ == '__main__':
 
 
     print("\n ======= Starting training ====== \n\n")
+    VALBEST = 9999999999
+    VALINC = 0
+
     scf.xc.train()
     PRINT_EVERY=1
     skip_steps = max(5, args.scf_steps - 10)
@@ -594,6 +846,29 @@ if __name__ == '__main__':
     validate_every = 10
 
     for epoch in range(100000):
+        if args.enhplot and args.targetdir:
+            models_plot['EPOCH_{}_BEFORE'.format(epoch)] = scf
+            dirstr = 'MODEL_{}'.format(args.type)
+            esuff = '_e0{}'.format(epoch) if epoch < 10 else '_e{}'.format(epoch)
+            dirstr = os.path.join(args.targetdir, dirstr+esuff, 'enh')
+            try:
+                print("os.makedirs({})".format(dirstr))
+                os.makedirs(dirstr)
+            except:
+                e = sys.exc_info()[0]
+                print(e)
+                #if directory exists, move on
+                pass
+            plot_fxc(models_plot, rs=[0.1], alpha_range=[1],
+                     savedir = dirstr,
+                     savename = 'e{}_before.pdf'.format(epoch))
+            plot_fxc(models_plot, rs=[1], alpha_range=[1],
+                     savedir = dirstr,
+                     savename = 'e{}_before.pdf'.format(epoch))
+            plot_fxc(models_plot, rs=[5], alpha_range=[1],
+                     savedir = dirstr,
+                     savename = 'e{}_before.pdf'.format(epoch))
+
         encountered_nan = True
         if (epoch == 0 and args.passthrough):
             #will be turned to train after first epoch
@@ -1020,38 +1295,128 @@ if __name__ == '__main__':
             print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
             print("============================================================")
             scheduler.step(total_loss)
-
+            if args.enhplot and args.targetdir:
+                models_plot['EPOCH_{}_AFTER'.format(epoch)] = scf
+                dirstr = 'MODEL_{}'.format(args.type)
+                esuff = '_e0{}'.format(epoch) if epoch < 10 else '_e{}'.format(epoch)
+                dirstr = os.path.join(args.targetdir, dirstr+esuff, 'enh')
+                try:
+                    print("os.makedirs({})".format(dirstr))
+                    os.makedirs(dirstr)
+                except:
+                    e = sys.exc_info()[0]
+                    print(e)
+                    #if directory exists, move on
+                    pass
+                plot_fxc(models_plot, rs=[0.1], alpha_range=[1],
+                        savedir = dirstr,
+                        savename = 'e{}_after.pdf'.format(epoch))
+                plot_fxc(models_plot, rs=[1], alpha_range=[1],
+                        savedir = dirstr,
+                        savename = 'e{}_after.pdf'.format(epoch))
+                plot_fxc(models_plot, rs=[5], alpha_range=[1],
+                        savedir = dirstr,
+                        savename = 'e{}_after.pdf'.format(epoch))
+            modelskeys = list(models_plot.keys())
+            for k in modelskeys:
+                if 'EPOCH' in k:
+                    del models_plot[k]
             if args.valtraj:
                 #validation -- symlink current.pt to xc
-                os.symlink(logpath+'_current.pt', os.path.join(args.logpath, 'xc'))
+                try:
+                    os.makedirs('MGGA_XC_CUSTOM')
+                except:
+                    pass
+
+                symlink(os.path.abspath(logpath+'_current.pt'), os.path.join(os.path.abspath('MGGA_XC_CUSTOM'), 'xc'), overwrite=True)
                 val = read(args.valtraj, ':')
 
                 atms = [i for i in val if i.info.get('atomization', None)]
+                atms_ref = {str(i.get_chemical_formula()) : i.info.get('atomization', None) for i in atms if i.info.get('atomization', None)}
+                atms_ref_singles = {k:0 for k in atms_ref.keys()}
+                print("VALIDATION: Generating dictionary of reference atomizations.")
+                for idx, at in enumerate(atms):
+                    syms = at.get_chemical_symbols()
+                    form = at.get_chemical_formula()
+                    print(idx, at, syms)
+                    if len(syms) == 1:
+                        print(form, "Individual atom in validation trajectory with atomization flag -- setting to zero since single atom.")
+                        atms_ref_singles[form] = 0
+                    else:
+                        atms_ref_singles[form] = atms_ref[form]
+                print("VALIDATION: REFERENCE ATOMIZATION ENERGIES = {}".format(atms_ref))
                 bhs = [i for i in val if i.info.get('product', None)]
                 products = list(set([i.info['product'] for i in bhs]))
-
-                atomic_e = get_singles(atms, model=args.logpath, valbasis=args.valbasis,
-                                        valpol = args.valpol, valgridlevel=args.valgridlevel, maxcycle=args.valmaxcycle)
-
-                val_e = get_validation(val, model=args.logpath, valbasis=args.valbasis,
-                                        valpol = args.valpol, valgridlevel=args.valgridlevel, maxcycle=args.valmaxcycle)
-
+                print("VALIDATION: REFERENCE ATOMIZATION ENERGIES, TAKING INTO ACCOUNT SINGLES = {}".format(atms_ref_singles))
+                atomic_e = get_singles_scf(atms, model=logpath+'_current.pt', valbasis=args.valbasis,
+                                        valpol = args.valpol, valgridlevel=args.valgridlevel,
+                                        valrefp=args.valrefp, valreft=args.valreft,
+                                        maxcycle=args.valmaxcycle, epoch=epoch, logpath=logpath)
+                print("SINGLES CALCULATION COMPLETE: {}".format(atomic_e))
+                val_e = get_validation_scf(val, model=logpath+'_current.pt', valbasis=args.valbasis,
+                                        valpol = args.valpol, valgridlevel=args.valgridlevel,
+                                        valrefp=args.valrefp, valreft=args.valreft,
+                                        maxcycle=args.valmaxcycle, epoch=epoch, logpath=logpath)
+                print("GET VALIDATION COMPLETE: {}".format(val_e))
+                val_preds = {}
                 for at in atms:
                     formula = at.get_chemical_formula()
                     pred_e = val_e[at.get_chemical_formula()]
                     start = pred_e
                     subs = at.get_chemical_symbols()
                     if len(subs) == 1:
-                        #single atom, no atomization needed
-                        print("SINGLE ATOM -- NO ATOMIZATION CALCULATION.")
-                    else:
-                        print("{} ({}) decomposition -> {}".format(at.get_chemical_formula(), pred_e, subs))
-                        for s in subs:
-                            print("{} - {} ::: {} - {} = {}".format(formula, s, start, atomic_e[s], start - atomic_e[s]))
-                            start -= atomic_e[s]
-                        print("Predicted Atomization Energy for {} : {}".format(formula, start))
-                        print("Reference Atomization Energy for {} : {}".format(formula, at.info['atomization']))
-                        print("Error: {}".format(start - at.info['atomization']))
+                        #single atom
+                        print("SINGLE ATOM -- ATOMIZATION IS REALLY TOTAL ENERGY.")
+                    print("{} ({}) decomposition -> {}".format(at.get_chemical_formula(), pred_e, subs))
+                    for s in subs:
+                        print("{} - {} ::: {} - {} = {}".format(formula, s, start, atomic_e[s], start - atomic_e[s]))
+                        start -= atomic_e[s]
+                    print("Predicted Atomization Energy for {} : {}".format(formula, start))
+                    print("Reference Atomization Energy for {} : {}".format(formula, at.info['atomization']))
+                    print("Error: {}".format(start - at.info['atomization']))
+                    val_preds[formula] = start
+                print("VALIDATION: PREDICTED ATOMIZATION ENERGIES: {}".format(val_preds))
+                if epoch == 0:
+                    ft = 'w'
+                else:
+                    ft = 'a'
+                thislogpath = logpath+'_' if (logpath and logpath[-1] != '_') else logpath
+                with open(thislogpath+'val.ae.dat', ft) as f:
+                    if epoch == 0:
+                        f.write("#Epoch\tAtom\tPredicted AE (Hartree)\tReference AE (Hartree)\t|Pred. - Ref.|\n")
+                    for k, v in val_e.items():
+                        f.write('{}\t{}\t{}\t{}\t{}\n'.format(epoch, k, v[-1], atms_ref_singles[k], abs(v[-1]-atms_ref_singles[k])))
+                        print('{}\t{}\t{}'.format(epoch, k, v))
+
+                #atomization loss
+                val_keys = list(val_preds.keys())
+                valrefs = []
+                valpreds = []
+                for vk in val_keys:
+                    valrefs.append(atms_ref[vk])
+                    valpreds.append(val_preds[vk])
+                #below comprehension if using SCF validation only
+                valrefs = np.array(valrefs)
+                valpreds = np.array([i[-1] for i in valpreds])
+                print(valrefs, valpreds)
+                VALMAE = np.mean(np.abs(valrefs-valpreds))
+                VALMSE = np.mean((valrefs-valpreds)**2)
+                print("VALIDATION STATS:")
+                print("MAE: {}".format(VALMAE))
+                print("MSE: {}".format(VALMSE))
+                print("sqrt(MSE): {}".format(np.sqrt(VALMSE)))
+                VALMAX = max(VALMAE, np.sqrt(VALMSE))
+                if VALMAX < VALBEST:
+                    VALBEST = VALMAX
+                    VALINC = 0
+                    torch.save(scf, logpath+'_valbest.pt')
+                else:
+                    VALINC += 1
+                print("MAX: {}".format(VALMAX))
+                print("BEST: {}.\tINCREMENT: {}.".format(VALBEST, VALINC))
+
+                if VALINC >= 15:
+                    raise ValueError("VALINC >= 15. Sufficient time passed with no improvement. Ending training.")
 
                 for prod in products:
                     reactants = [i for i in val if i.info['product'] == prod]
@@ -1062,6 +1427,12 @@ if __name__ == '__main__':
                     print("CALCULATED BH: {}".format(bh))
                     print("REFERENCE BH: {}".format(bhr))
                     print("ERROR: |{} - {}| = {}".format(bh, bhr, abs(bh-bhr)))
+
+                
+                with open(logpath+'_valloss.dat', 'a') as f:
+                    if epoch == 0:
+                        f.write('#Epoch\tVALMAE\tVALMSE\tsqrt(VALMSE)\tVALMAX\tVALBEST\tVALINC\n')
+                    f.write('{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(epoch, VALMAE, VALMSE, np.sqrt(VALMSE), VALMAX, VALBEST, VALINC))
 
         if chkpt_idx > args.chkptmax:
             print("Max checkpoint number reached -- aborting training process.")

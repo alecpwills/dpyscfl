@@ -791,7 +791,8 @@ def get_scf(xctype, pretrain_loc='', hyb_par=0, path='', DEVICE='cpu', ueg_limit
         xc = XC(grid_models=[x, c], heg_mult=True, level=xc_level)
         if path:
             try:
-                xc.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+                xcp = torch.load(path, map_location=torch.device('cpu')).xc
+                xc.load_state_dict(xcp.state_dict())
             except AttributeError:
                 # AttributeError: 'RecursiveScriptModule' object has no attribute 'copy'
                 #occurs when loading finished xc from xcdiff

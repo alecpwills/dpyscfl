@@ -317,7 +317,7 @@ class XC(torch.nn.Module):
 
         return Exc
 
-    def eval_grid_models(self, rho):
+    def eval_grid_models(self, rho, debug=False):
         """Evaluates all models stored in self.grid_models along with HEG exchange and correlation
 
 
@@ -356,6 +356,19 @@ class XC(torch.nn.Module):
         exc_b = torch.zeros_like(rho0_a)
         exc_ab = torch.zeros_like(rho0_a)
 
+        if debug:
+            print('eval_grid_models nan summary:')
+            print('zeta, rs, rs_a, rs_b, exc_a, exc_b, exc_ab')
+            print('{}, {}, {}, {}, {}, {}, {}'.format(
+                torch.isnan(zeta).any().sum(),
+                torch.isnan(rs).any().sum(),
+                torch.isnan(rs_a).any().sum(),
+                torch.isnan(rs_b).any().sum(),
+                torch.isnan(exc_a).any().sum(),
+                torch.isnan(exc_b).any().sum(),
+                torch.isnan(exc_ab).any().sum(),                
+            ))
+
         descr_method = self.get_descriptors
 
 
@@ -391,9 +404,9 @@ class XC(torch.nn.Module):
                         pw_alpha = self.pw_model(rs_a, torch.ones_like(rs_a))
                         pw_beta = self.pw_model(rs_b, torch.ones_like(rs_b))
                         pw = self.pw_model(rs, zeta)
-                        ec_alpha = (1 + exc[:,0])*pw_alpha*rho0_a/rho_tot
-                        ec_beta =  (1 + exc[:,1])*pw_beta*rho0_b/rho_tot
-                        ec_mixed = (1 + exc[:,2])*(pw*rho_tot - pw_alpha*rho0_a - pw_beta*rho0_b)/rho_tot
+                        ec_alpha = (1 + exc[:,0])*pw_alpha*rho0_a/(rho_tot+1e-8)
+                        ec_beta =  (1 + exc[:,1])*pw_beta*rho0_b/(rho_tot+1e-8)
+                        ec_mixed = (1 + exc[:,2])*(pw*rho_tot - pw_alpha*rho0_a - pw_beta*rho0_b)/(rho_tot+1e-8)
                         exc_ab = ec_alpha + ec_beta + ec_mixed
                     else:
                         if self.pw_mult:
@@ -437,7 +450,21 @@ class XC(torch.nn.Module):
                 exc_ab = self.pw_model(rs, zeta)
 
 
-        exc = rho0_a_ueg/rho_tot*exc_a + rho0_b_ueg/rho_tot*exc_b + exc_ab
+        # exc = rho0_a_ueg/rho_tot*exc_a + rho0_b_ueg/rho_tot*exc_b + exc_ab
+        exc = exc_a * (rho0_a_ueg/ (rho_tot + self.epsilon)) + exc_b*(rho0_b_ueg / (rho_tot + self.epsilon)) + exc_ab
+        if debug:
+            print('eval_grid_models nan summary:')
+            print('zeta, rs, rs_a, rs_b, exc_a, exc_b, exc_ab')
+            print('{}, {}, {}, {}, {}, {}, {}'.format(
+                torch.isnan(zeta).any().sum(),
+                torch.isnan(rs).any().sum(),
+                torch.isnan(rs_a).any().sum(),
+                torch.isnan(rs_b).any().sum(),
+                torch.isnan(exc_a).any().sum(),
+                torch.isnan(exc_b).any().sum(),
+                torch.isnan(exc_ab).any().sum(),                
+            ))
+
         return exc.unsqueeze(-1)
 
 class C_L(torch.nn.Module):
